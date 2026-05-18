@@ -475,3 +475,69 @@ Compassionate medical AI response:
     return "معذرت، عارضی نیٹ ورک کا مسئلہ ہے۔ اگر آپ کو سر میں شدید درد، دھندلا پن، یا سوجن کا سامنا ہے تو براہ کرم فوری طور پر ڈاکٹر یا قریبی ہسپتال سے رجوع کریں۔";
   }
 }
+
+/**
+ * Expectant Clinical/Admin Assistant function for Staff (ADMIN, NURSE, LHW).
+ * Allows staff to ask questions about clinical guidelines, patient risk telemetry, or system status.
+ */
+export async function askClinicalAssistant(user: any, userMessage: string, context?: string): Promise<string> {
+  const model = GEMMA_MODEL;
+
+  const prompt = `
+You are "Gemma Clinical Care Director", a senior clinical strategist and maternal health AI advisor for Maternalink Hub.
+You are helping a logged-in system user:
+User Name: ${user.name}
+User Role: ${user.role}
+Requested Context: ${context || 'General'}
+
+Instructions:
+1. Provide highly professional, evidence-based medical and system administrative advice.
+2. Align your responses with WHO maternal care standards and the Pakistan National Health Guidelines.
+3. Be concise and structured (use bullet points if explaining steps, max 4 sentences).
+4. Address clinical risks such as eclampsia (systolic BP >= 140 or diastolic >= 90), severe postpartum hemorrhage (active bleeding), and gestational diabetes.
+5. If the request is administrative, guide them on operational workflows in Maternalink.
+
+Staff Request:
+"${userMessage}"
+
+Clinical Director Response:
+`;
+
+  if (!OPENROUTER_API_KEY) {
+    console.log("⚠️ No OpenRouter key. Using Mock clinical assistant response.");
+    return "Thank you, clinical member. I am analyzing the maternal indicators. If there are severe signs of pre-eclampsia (BP >= 140/90 or Proteinuria), refer the patient immediately to Mithi DHQ Hospital and dispatch an emergency transport card.";
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "HTTP-Referer": "https://maternalink.org",
+        "X-Title": "Maternalink Hub",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.5,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error();
+    }
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "Thank you. Clinical indicators registered. Please refer to Mithi DHQ Hospital for high-risk parameters.";
+  } catch (err) {
+    console.error("Clinical assistant response failed:", err);
+    return "Network error. Please ensure your OpenRouter API key is active. In cases of critical parameters, ensure immediate escalation protocols are triggered.";
+  }
+}
+

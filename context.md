@@ -12,6 +12,15 @@
 
 ## 📅 Change Log
 
+### [2026-05-18] — Gemma AI Assistant Fixes: Staff Authorization & OpenRouter Integration
+
+**What Changed:**
+1. **Endpoint Authorization Bypass:** Refactored the `/api/ai/chat` endpoint to allow all valid system roles (`PATIENT`, `LHW`, `NURSE`, `ADMIN`) to query the AI assistant, dynamically routing patients and clinical staff to their respective context-aware prompts.
+2. **Invalid Model Identifier Resolution:** Fixed a configuration typo in `.env` where `GEMMA_MODEL` was set to an invalid model. Swapped it for `google/gemma-2-9b-it:free`, which is OpenRouter's official, highly reliable, and free state-of-the-art model.
+3. **Staff Clinical Persona Implementation:** Created the `askClinicalAssistant` service function in `src/services/openrouter.ts` aligned with WHO and National Health guidelines, allowing senior administrators and LHWs to ask for real-time guidance on patient risk protocols.
+
+---
+
 ### [2026-05-18] — Render.com Blueprint Infrastructure Setup
 
 **What Changed:** Created a production-grade `render.yaml` infrastructure-as-code Blueprint specification file. This automates the setup of the Astro SSR server, runtime configurations, build targets, and securely maps all dynamic environment variables (including auto-generating `JWT_SECRET`).
