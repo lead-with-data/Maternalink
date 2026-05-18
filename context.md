@@ -12,6 +12,16 @@
 
 ## 📅 Change Log
 
+### [2026-05-18] — Dynamic Multi-Platform Deploy: Vercel SSR Integration
+
+**What Changed:**
+1. **Vercel Serverless Integration:** Installed and integrated the `@astrojs/vercel` serverless SSR adapter. 
+2. **Conditional Build Orchestration:** Updated `astro.config.mjs` to dynamically load the Vercel serverless adapter when `process.env.DEPLOY_PLATFORM === 'vercel'` and fallback to standard `@astrojs/node` when deploying to Render.
+3. **Local Dry-Run Testing:** Successfully compiled and built both local targets (`@astrojs/node` standalone server and `@astrojs/vercel` serverless directory) with 100% success.
+4. **Git Sync:** Ignored local `.vercel/` build artifacts and pushed all Vercel integration code to the remote repository.
+
+---
+
 ### [2026-05-18] — Render.com Port-Binding & Interface Alignment Fixes
 
 **What Changed:**
