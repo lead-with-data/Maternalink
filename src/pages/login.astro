@@ -11,8 +11,7 @@ const existingUser = sessionCookie ? verifySession(sessionCookie) : null;
 // If user is already logged in, redirect to correct dashboard
 if (existingUser) {
   if (existingUser.role === 'ADMIN') return Astro.redirect('/admin/dashboard');
-  if (existingUser.role === 'NURSE') return Astro.redirect('/nurse/dashboard');
-  if (existingUser.role === 'LHW') return Astro.redirect('/lhw/dashboard');
+  if (existingUser.role === 'NURSE' || existingUser.role === 'LHW') return Astro.redirect('/staff/dashboard');
   if (existingUser.role === 'PATIENT') return Astro.redirect('/patient/dashboard');
 }
 
@@ -52,8 +51,7 @@ if (Astro.request.method === 'POST') {
 
         // Redirect based on role
         if (user.role === 'ADMIN') return Astro.redirect('/admin/dashboard');
-        if (user.role === 'NURSE') return Astro.redirect('/nurse/dashboard');
-        if (user.role === 'LHW') return Astro.redirect('/lhw/dashboard');
+        if (user.role === 'NURSE' || user.role === 'LHW') return Astro.redirect('/staff/dashboard');
       } else {
         // Try patient authentication (CNIC and Mobile clean string match)
         const cleanMobile = mobile.replace(/[^0-9]/g, '').replace(/^0/, '');
@@ -236,7 +234,7 @@ if (Astro.request.method === 'POST') {
       </div>
 
       <!-- Presets Pill Buttons Grid -->
-      <div class="grid grid-cols-4 gap-2 text-center text-[8px] tracking-widest font-extrabold">
+      <div class="grid grid-cols-3 gap-2 text-center text-[8px] tracking-widest font-extrabold max-w-xs mx-auto">
         <button 
           type="button" 
           onclick="setPreset('03001111111')" 
@@ -249,14 +247,7 @@ if (Astro.request.method === 'POST') {
           onclick="setPreset('03002222222')" 
           class="py-2.5 px-0.5 rounded-full bg-white border border-[#2c2230]/10 hover:border-amber-300 text-[#765e82] hover:bg-amber-50/20 transition-all cursor-pointer shadow-sm active:scale-[0.97]"
         >
-          NURSE
-        </button>
-        <button 
-          type="button" 
-          onclick="setPreset('03003333333')" 
-          class="py-2.5 px-0.5 rounded-full bg-white border border-[#2c2230]/10 hover:border-emerald-300 text-[#765e82] hover:bg-emerald-50/20 transition-all cursor-pointer shadow-sm active:scale-[0.97]"
-        >
-          LHW
+          STAFF
         </button>
         <button 
           type="button" 

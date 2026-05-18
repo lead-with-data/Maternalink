@@ -235,7 +235,7 @@ export async function streamVisitFactToBigQuery(visit: any, patientId: string) {
  * to fetch live analytics telemetry for a specific Lady Health Worker (LHW).
  * Uses robust fallsbacks.
  */
-export async function getLHWBigQueryMetrics(lhwId: string) {
+export async function getStaffBigQueryMetrics(lhwId: string) {
   try {
     const query = `
       SELECT 
@@ -268,3 +268,7 @@ export async function getLHWBigQueryMetrics(lhwId: string) {
     return null;
   }
 }
+
+export const getLHWBigQueryMetrics = getStaffBigQueryMetrics;
+
+

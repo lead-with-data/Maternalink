@@ -7,10 +7,8 @@ import { Severity } from '@prisma/client';
 const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
 const user = sessionCookie ? verifySession(sessionCookie) : null;
 
-// Secure page: strictly NURSE
-if (!user || user.role !== 'NURSE') {
-  return Astro.redirect('/login');
-}
+// Redirect legacy nurse dashboard to unified staff dashboard
+return Astro.redirect('/staff/dashboard');
 
 let successMessage = '';
 let errorMessage = '';

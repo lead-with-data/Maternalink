@@ -6,7 +6,7 @@ export interface SessionUser {
   id: string;
   name: string;
   email: string;
-  role: 'ADMIN' | 'NURSE' | 'LHW' | 'PATIENT';
+  role: 'ADMIN' | 'STAFF' | 'PATIENT';
   districtId: string | null;
   facilityId: string | null;
 }

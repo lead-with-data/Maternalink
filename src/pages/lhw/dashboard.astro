@@ -9,10 +9,8 @@ import { streamDimensionToBigQuery, streamVisitFactToBigQuery, getLHWBigQueryMet
 const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
 const user = sessionCookie ? verifySession(sessionCookie) : null;
 
-// Secure LHW role gate
-if (!user || user.role !== 'LHW') {
-  return Astro.redirect('/login');
-}
+// Redirect legacy LHW dashboard to unified staff dashboard
+return Astro.redirect('/staff/dashboard');
 
 let successMessage = '';
 let errorMessage = '';

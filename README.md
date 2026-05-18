@@ -1,333 +1,261 @@
 # 🌸 Maternalink — AI-Powered Maternal Health Intelligence Platform
 
-> **Hackathon Project** — A full-stack digital health platform designed to dramatically reduce maternal mortality in rural Pakistan by connecting Lady Health Workers (LHWs), nurses, and administrators through AI-driven clinical decision support, real-time analytics, and a multilingual voice-powered data entry system.
-
----
-
 ## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Tech Stack](#tech-stack)
+- [Executive Summary \& Motivation](#executive-summary--motivation)
+- [The Solution: Maternalink Architecture](#the-solution-maternalink-architecture)
+- [Key Features](#key-features)
+- [Technology Stack](#technology-stack)
 - [System Architecture](#system-architecture)
-- [User Portals](#user-portals)
+- [User Portals \& Interfaces](#user-portals--interfaces)
 - [Database Schema](#database-schema)
-- [AI Services](#ai-services)
-- [BigQuery Data Warehouse](#bigquery-data-warehouse)
+- [Privacy \& Anonymization Protocol](#privacy--anonymization-protocol)
+- [Google BigQuery Data Warehouse](#google-bigquery-data-warehouse)
+- [AI Risk Engine (Gemma)](#ai-risk-engine-gemma)
 - [Environment Setup](#environment-setup)
 - [Running Locally](#running-locally)
 - [CLI Utilities](#cli-utilities)
 - [Test Credentials](#test-credentials)
-- [Project Structure](#project-structure)
 
 ---
 
-## Overview
+## Executive Summary & Motivation
 
-Maternalink is a **server-side rendered (SSR) web application** built on AstroJS targeting frontline community healthcare workers in rural Pakistan. It digitizes the paper-based maternal health surveillance process and augments it with:
+### The Crisis in Pakistan
+Pakistan continues to face a major maternal health crisis. Hundreds of women die every year from preventable pregnancy and childbirth complications, especially in rural and underserved areas. Key medical causes include:
+*   **Preeclampsia** (severe high blood pressure)
+*   **Gestational diabetes**
+*   **Severe anemia**
+*   **Delayed emergency referrals**
+*   **Lack of medical records** and **poor continuity of care**
 
-- 🤖 **Gemma 4 AI clinical decision support** — AI-powered risk analysis after every checkup
-- 🎙️ **Urdu voice transcript data entry** — LHWs can speak in Urdu, transcript is analyzed for danger signs
-- 📊 **Google BigQuery data warehouse** — real-time analytics dashboards for each user role
-- ⚠️ **Automated emergency alerts** — triggered on HIGH/CRITICAL risk ratings
-- 📈 **Time-series maternal telemetry** — longitudinal tracking of vitals across all visits
-- 🔒 **Role-based access control** — Admin / Nurse / LHW / Patient portals, each with isolated views
+According to reports from the **Gates Foundation**, **more than 150 women die per 100,000 live births in Pakistan**. The vast majority of these deaths are completely preventable with early screening and active continuity of care.
+
+### Systemic Challenges
+1.  **Paper-Based Records:** Frontline health workers carry heavy registers; records are frequently lost, torn, or inaccessible during emergencies.
+2.  **No Follow-Up Tracking:** Mothers often visit clinics only once, leaving healthcare providers with no historical baseline or patient history.
+3.  **Frontline Overload:** Overworked doctors and a lack of trained specialists in rural communities.
+4.  **Low Literacy Gaps:** Traditional digital tools fail due to written Urdu literacy barriers.
+5.  **Fragmented Health Systems:** No real-time connection between local field workers, health facility clinics, and district headquarters.
+
+### The Luminary Collaboration
+The collaboration between the **Gates Foundation**, **Lahore University of Management Sciences (LUMS)**, and **Aga Khan University (AKU)** represents one of Pakistan’s most important AI-driven maternal healthcare initiatives. 
+
+At the center of this movement is **Dr. Maryam Mustafa**, whose pioneering work combines:
+*   **Artificial Intelligence**
+*   **Speech Recognition**
+*   **Urdu/Local Language Interfaces**
+*   **Digital Maternal Records**
+*   **Human-Centered Design**
+*   **Women’s Healthcare Accessibility**
+
+Her flagship project, *Awaaz-e-Sehat*, is creating voice-driven AI systems for frontline health workers and pregnant women in low-resource settings. **Maternalink** is built directly in the spirit of this movement to bridge these critical healthcare gaps.
 
 ---
 
-## Tech Stack
+## The Solution: Maternalink Architecture
+Maternalink is a **server-side rendered (SSR) cloud portal** built on AstroJS that digitizes the maternal health surveillance workflow. It provides real-time, bi-directional telemetry synchronizing local frontline checkups with facility staff, district supervisors, and AI research engines.
+
+---
+
+## Key Features
+
+*   🎙️ **Urdu speech transcript data entry:** Health workers can dictate checkup observations in Urdu; Gemma AI parses the transcript for danger signs.
+*   🤖 **Gemma AI Clinical Prognosis:** Custom LLM prompts evaluate blood pressure, hemoglobin, and symptoms to compute an automated distress score (0-100) and actionable Urdu guidance.
+*   📊 **Dual-Layer Bi-directional Telemetry:** Checkups automatically flow into high-performance Google BigQuery data warehouse tables, with zero-downtime automatic fallback to local PostgreSQL transactions.
+*   🔒 **Rigorous Privacy Compliance:** Enforces SHA-256 patient ID pseudonymization and strips all Personally Identifiable Information (PII) before serving telemetry to AI researchers.
+*   👁️ **Expandable Cohort Ledger:** Clinical staff can click any patient row in the Unified Monitor to expand detailed history timelines, vitals progression, and Gemma insights.
+*   🔬 **Interactive Labs & AI Explorer:** A dedicated research sandbox to live-query de-identified clinical datasets, featuring a reactive, interactive **cURL Code Generator**.
+*   🚨 **Automated Emergency Control:** HIGH and CRITICAL risk levels trigger instant, high-visibility emergency dispatch alerts to facility clinical staff.
+
+---
+
+## Technology Stack
 
 | Layer | Technology |
 |---|---|
-| **Framework** | [Astro 6 (SSR)](https://astro.build) with Node.js adapter |
-| **Styling** | TailwindCSS 4 |
-| **Database** | PostgreSQL via Supabase (cloud-hosted) |
-| **ORM** | Prisma 7 with `@prisma/adapter-pg` |
-| **AI Engine** | OpenRouter API → `google/gemma-4-31b-it:free` |
+| **Core Framework** | [Astro 6 (SSR)](https://astro.build) with Node.js Adapter |
+| **Styling** | Custom HSL-tailored Premium Glassmorphic Vanilla CSS & TailwindCSS |
+| **Transactional DB** | PostgreSQL hosted on Supabase |
+| **ORM** | Prisma 7 |
+| **AI LLM Engine** | OpenRouter API / Google Gemma AI |
 | **Data Warehouse** | Google BigQuery (`@google-cloud/bigquery`) |
-| **Auth** | JWT-based session cookies (via `lib/session.ts`) |
-| **Deployment** | Local dev on `localhost:4321–4323` |
+| **Session Control** | Secure JWT-based HTTP-only session cookies |
 
 ---
 
 ## System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         Browser / Client                             │
-│  Patient Portal │ LHW Portal │ Nurse Portal │ Admin Portal           │
-└──────────────────────────┬───────────────────────────────────────────┘
-                           │ HTTPS / SSR
-┌──────────────────────────▼───────────────────────────────────────────┐
-│                    Astro SSR Server (Node.js)                        │
-│  ┌─────────────┐  ┌─────────────────┐  ┌────────────────────────┐   │
-│  │  Pages/SSR  │  │   API Routes    │  │   Middleware / Auth    │   │
-│  │  (Astro)    │  │  /api/ai/chat   │  │   verifySession (JWT)  │   │
-│  │             │  │  /api/ai/       │  │   Role-gate guards     │   │
-│  │             │  │  transcribe     │  │                        │   │
-│  └──────┬──────┘  └────────┬────────┘  └────────────────────────┘   │
-│         │                  │                                         │
-│  ┌──────▼──────────────────▼──────────────────────────────────────┐  │
-│  │                    Service Layer                               │  │
-│  │  openrouter.ts (Gemma AI)  │  bigquery.ts (DW Analytics)     │  │
-│  └──────┬──────────────────────────────────────────┬─────────────┘  │
-└─────────┼────────────────────────────────────────── ┼───────────────┘
-          │                                           │
-┌─────────▼──────────┐                    ┌──────────▼──────────────┐
-│  Supabase PostgreSQL│                    │  Google BigQuery DW     │
-│  (Transactional DB) │                    │  maternalink_analytics  │
-│  Prisma ORM         │                    │  DimPatient             │
-│                     │                    │  DimPregnancy           │
-│  Users, Patients,   │ ──── Sync ────►   │  FactVisit              │
-│  Pregnancies,       │  (on register/     │                         │
-│  Visits, Alerts,    │   checkup)         │  lhwId-filtered queries │
-│  AuditLogs          │                    │  for real-time KPIs     │
-└─────────────────────┘                    └─────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              Client Browser                                │
+│    Patient Portal  │   Staff Dashboard   │   Admin Command Bento Deck       │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      │ HTTPS / SSR
+┌─────────────────────────────────────▼──────────────────────────────────────┐
+│                         Astro SSR Node.js Server                           │
+│   ┌──────────────┐   ┌───────────────────────┐   ┌──────────────────────┐  │
+│   │  Astro SSR   │   │      API Routes       │   │  verifySession JWT   │  │
+│   │    Pages     │   │     /api/labs/        │   │  Role-Gate Guards    │  │
+│   └──────┬───────┘   └──────────┬────────────┘   └──────────────────────┘  │
+│          │                      │                                          │
+│   ┌──────▼──────────────────────▼──────────────────────────────────────┐  │
+│   │                           Services                                 │  │
+│   │      openrouter.ts (Gemma AI)  │  bigquery.ts (Google Cloud DW)    │  │
+│   └──────┬──────────────────────────────────────────┬──────────────────┘  │
+└──────────┼──────────────────────────────────────────┼─────────────────────┘
+           │                                          │
+┌──────────▼───────────┐                 ┌────────────▼─────────────┐
+│ Supabase PostgreSQL  │                 │ Google BigQuery Warehouse│
+│ (Transactional DB)   │ ─── Sync ─────► │ (Star Schema Warehouse)  │
+│   Prisma ORM         │                 │   DimPatient, FactVisit  │
+└──────────────────────┘                 └──────────────────────────┘
 ```
 
 ---
 
-## User Portals
+## User Portals & Interfaces
 
-### 🔵 Patient Portal (`/patient/dashboard`)
-- View own pregnancy timeline and all historical checkup vitals
-- See AI-generated Urdu health advice from last visit
-- Track BP, hemoglobin, weight, FHR time-series
-- View assigned LHW contact info and next appointment
+### 🔴 Admin Command Bento Deck (`/admin/dashboard`)
+*   **Fitbit-Style Spatial Design:** Wrapped in elegant HSL gradient backdrop overlay.
+*   **Two-Column Grid Layout:** High-density left column manages frontline staff credentials and registration; right column streams active emergency dispatch signals and system audit logs.
+*   **Gemma Command Companion:** Live administrative chatbot designed to assist coordinators with real-time district statistics and resource dispatch.
 
-### 🟢 LHW Portal (`/lhw/dashboard`)
-The primary data entry interface for frontline Lady Health Workers.
+### 🟣 Staff Command Dashboard (`/staff/dashboard`)
+*   **Longitudinal Cohort Monitor:** Interactive ledger table featuring a click-to-expand details panel for every patient.
+*   **Gemma LLM Prognosis Card:** Instantly previews complete time-series health advice and danger sign extractions.
+*   **Urdu Voice Transcription Input:** Enables hands-free clinical checkup logging.
+*   **Labs & AI Explorer Console:** Allows clinical researchers to query anonymized records, verify token authentication using `MATERNALINK_LABS_KEY_2026`, and copy real-time auto-generated cURL requests.
 
-**KPI Metrics (Live from BigQuery):**
-- **Assigned Cohort** — total mothers registered under this LHW
-- **High-Risk Cases** — mothers with HIGH or CRITICAL risk rating
-- **Checkups Logged** — total surveillance encounters documented
-
-**Features:**
-- Register new expectant mothers with full obstetric history (gravida, parity, education, socioeconomic, hospital distance, clean water access)
-- Log clinical checkups with BP, hemoglobin, weight, FHR, pulse, temperature, oxygen saturation, urine protein, blood glucose, iron adherence
-- Urdu voice transcript field — notes are analyzed by Gemma AI for danger signs
-- AI-powered risk score and clinical decision support after every checkup
-- Automated emergency alerts dispatched on HIGH/CRITICAL outcomes
-- Full longitudinal patient cohort ledger with time-series vitals progression
-- Pregnancy context panel showing previous BP trajectory, Hb trend, and medication history
-
-**Data Warehouse Badge:**
-- 🟢 **BigQuery Live DW Connected** — metrics served from real-time warehouse
-- 🟡 **PostgreSQL Fail-Safe Active** — graceful fallback if BigQuery is unavailable
-
-### 🟠 Nurse Portal (`/nurse/dashboard`)
-- View all high-risk cases across assigned facility
-- Resolve emergency alerts and update clinical notes
-- Monitor incoming LHW checkup telemetry
-
-### 🔴 Admin Portal (`/admin/dashboard`)
-- **Fitbit-style Premium Command HQ** — overhanging warm dark-blend backdrop with glassmorphic dashboards
-- **Two-Column Bento Command Deck** — Reorganized layout with wide Left Column (`lg:col-span-2`) for **Worker Registration & Table**, and single Right Column (`lg:col-span-1`) stacking the **Emergency Control Feed** and the **Platform Activity Audit Timeline** for high-density observational tracking.
-- **User Management** — seamless portal to register and oversee frontline LHWs and clinical Nurses
-- **Platform Activity Audit** — immutable system-wide timelines logging administrative and healthcare actions
-- **Gemma Command AI assistant** — integrated floating administrative AI helper widget giving real-time data trends and population monitoring support
+### 🔵 Patient Care Portal (`/patient/dashboard`)
+*   **Visual Gestation Timeline:** Displays gestational weeks and risk categorizations clearly.
+*   **Urdu Advice Hub:** Direct Arabic-script Urdu voice translation cards giving maternal guidance.
+*   **Historical Trends:** Graphical telemetry tracking blood pressure and hemoglobin.
 
 ---
 
 ## Database Schema
 
 ```prisma
-District → HealthFacility → User (ADMIN | NURSE | LHW)
-                         → Patient → Pregnancy → Visit → Alert
-                                                       → AuditLog
+District ──► HealthFacility ──► User (ADMIN | STAFF)
+                            ──► Patient ──► Pregnancy ──► Visit ──► Alert
 ```
 
-### Key Models
-
-| Model | Purpose |
-|---|---|
-| `User` | Healthcare staff (Admin, Nurse, LHW) with role-based access |
-| `Patient` | Expectant mother profile, linked to a specific LHW via `lhwId` |
-| `Pregnancy` | Active or historical pregnancy record (gravida, parity, dates) |
-| `Visit` | Clinical checkup: BP, Hb, weight, FHR, symptoms JSON, AI risk score |
-| `Alert` | Emergency notification triggered by HIGH/CRITICAL risk visits |
-| `AuditLog` | Immutable log of every clinical action for accountability |
-| `HealthFacility` | Rural Health Clinic or BHU, linked to a District |
+*   `User`: Staff members (Coordinators, Clinicians, Field Workers) with secure role-based gating.
+*   `Patient`: Mother records with demographic context (socioeconomic level, clean water, distance to clinic).
+*   `Pregnancy`: Gestation timeline variables (gravida, parity, LMP).
+*   `Visit`: Checkup vitals telemetry including systolic/diastolic BP, pulse, temp, Hb, SpO2, urine protein, and raw Urdu clinical speech records.
+*   `Alert`: High-urgency notifications dispatched automatically upon critical vitals matches.
 
 ---
 
-## AI Services
+## Privacy & Anonymization Protocol
 
-### `src/services/openrouter.ts`
-- Calls OpenRouter API with the `google/gemma-4-31b-it:free` model
-- Analyzes patient vitals + symptoms + voice transcript
-- Returns:
-  - `riskCategory`: `LOW | MEDIUM | HIGH_RISK | CRITICAL`
-  - `score`: 0–100 distress index
-  - `clinicalSummary`: Urdu advice card text
-  - `recommendedActions`: medication/referral recommendations
-
-### `src/pages/api/ai/chat.ts`
-- REST endpoint for AI assistant chat interface used in patient portal
-
-### `src/pages/api/ai/transcribe.ts`
-- Processes Urdu voice transcripts for danger-sign extraction
+Maternalink implements standard-grade cryptographic de-identification to enforce researcher safety under `/api/labs`:
+1.  **SHA-256 Pseudonyms:** Patient records are hashed:
+    $$\text{Anonymized ID} = \text{SHA256}(\text{Patient ID} + \text{Salt})$$
+2.  **PII Stripping:** Patient Names, CNIC numbers, Phone Numbers, and precise village locations are completely omitted from the JSON payloads.
+3.  **Strict Gated Access:** Requests must be authenticated with the API key:
+    `MATERNALINK_LABS_KEY_2026` passed via the `Authorization: Bearer <key>` header.
 
 ---
 
-## BigQuery Data Warehouse
+## Google BigQuery Data Warehouse
 
-### Architecture
-The BigQuery warehouse (`maternalink_analytics`) runs a **star schema** with:
+The platform uses a **star schema** to power real-time analytics KPIs:
+*   `DimPatient`: Contextual pregnancy indicators.
+*   `FactVisit`: Time-series factual measurements.
 
-| Table | Description |
-|---|---|
-| `DimPatient` | Patient dimension — includes `lhwId` for LHW-level filtering |
-| `DimPregnancy` | Pregnancy dimension |
-| `FactVisit` | Visit fact table — clinical vitals, risk scores, medications |
+```sql
+-- Sample BigQuery Analytics Query used internally
+SELECT 
+  COUNT(visitId) as total_checkups,
+  AVG(CAST(riskScore AS FLOAT64)) as average_risk
+FROM `maternalink-analytics.maternalink_analytics.FactVisit`
+WHERE riskCategory = 'HIGH'
+```
 
-### Key Functions in `src/services/bigquery.ts`
+---
 
-| Function | Purpose |
-|---|---|
-| `initializeBigQueryDataset()` | Creates dataset + tables if missing; auto-migrates missing schema fields |
-| `streamDimensionToBigQuery(patient, pregnancy)` | Loads patient + pregnancy rows on registration |
-| `streamVisitFactToBigQuery(visit, patientId)` | Loads checkup telemetry fact row |
-| `getLHWBigQueryMetrics(lhwId)` | Executes live SQL to fetch KPIs filtered by LHW ID |
+## AI Risk Engine (Gemma)
 
-### Free-Tier Constraints
-- Uses **batch load jobs** (`NEWLINE_DELIMITED_JSON`) — NOT streaming inserts (avoids billing)
-- `DELETE` DML requires billing — use `table.delete()` + `dataset.createTable()` to truncate (used in rebuild script)
-- Queries (`SELECT COUNT`) work on free tier without billing
-
-### Data Sync Flow
-1. LHW registers patient → `streamDimensionToBigQuery()` called immediately
-2. LHW logs checkup → `streamVisitFactToBigQuery()` called after AI analysis
-3. BigQuery batch job runs (1–2 min propagation delay)
-4. Next dashboard load → `getLHWBigQueryMetrics()` returns updated counts
+Built on OpenRouter utilizing `google/gemma-4-31b-it:free`. Vitals inputs are formulated as structured JSON context:
+```json
+{
+  "systolic": 145,
+  "diastolic": 95,
+  "hemoglobin": 9.2,
+  "symptoms": "High blood pressure, headache, vision blur"
+}
+```
+The model extracts clinical risk categorizations, produces urgent clinical interventions, and formulates high-literacy Urdu advice:
+> "فوری آرام کریں اور قریبی مرکز صحت سے رجوع کریں۔ اپنا بلڈ پریشر باقاعدگی سے چیک کروائیں۔"
 
 ---
 
 ## Environment Setup
 
-Copy the following into your `.env` file:
+Configure a `.env` file in the project root:
 
 ```env
-# Supabase PostgreSQL
-DATABASE_URL="postgresql://..."
+# Database Credentials
+DATABASE_URL="postgresql://postgres:password@db.supabase.co:5432/postgres"
 
-# OpenRouter AI (Gemma 4)
+# JWT Token Secret
+JWT_SECRET="maternalink-jwt-super-secret-key-2026"
+
+# Gemma OpenRouter AI
 OPENROUTER_API_KEY="sk-or-v1-..."
 GEMMA_MODEL="google/gemma-4-31b-it:free"
-
-# JWT Session Auth
-JWT_SECRET="your-secret-key"
 
 # Google BigQuery Data Warehouse
 GCP_PROJECT_ID="maternalink-analytics"
 GCP_DATASET_ID="maternalink_analytics"
-GOOGLE_APPLICATION_CREDENTIALS="maternalink-analytics-key.json"
+
+# Service Account Credentials (For Zero-Config Cloud hosting, paste values from key json)
+GCP_CLIENT_EMAIL="maternalink-bq-writer@project.iam.gserviceaccount.com"
+GCP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQ..."
 ```
-
-Place `maternalink-analytics-key.json` (Google Service Account key) in the **project root**.
-
-**Required GCP IAM Roles:**
-- `roles/bigquery.dataEditor`
-- `roles/bigquery.jobUser`
 
 ---
 
 ## Running Locally
 
-```bash
-# Install dependencies
-npm install
-
-# Generate Prisma client
-npx prisma generate
-
-# Push schema to database
-npx prisma db push
-
-# Seed with test data
-npx tsx prisma/seed.ts
-
-# Start development server
-npm run dev
-```
-
-> Server starts at `http://localhost:4321` (may vary per terminal: 4322, 4323)
+1.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
+2.  **Set up Database & Schema:**
+    ```bash
+    npx prisma db push
+    npx prisma generate
+    ```
+3.  **Seed Database:**
+    ```bash
+    npx tsx prisma/seed.ts
+    ```
+4.  **Run Development Server:**
+    ```bash
+    npm run dev
+    ```
+    *   Console starts on `http://localhost:10002`
 
 ---
 
 ## CLI Utilities
 
-| Command | Purpose |
-|---|---|
-| `npx tsx prisma/seed.ts` | Seeds the PostgreSQL database with test users, facilities, patients |
-| `npx tsx prisma/backfill_bigquery.ts` | Syncs all existing PostgreSQL data into BigQuery warehouse |
-| `npx tsx prisma/rebuild_bigquery.ts` | **Full rebuild** — drops + recreates BigQuery tables then reloads all clean data from Postgres |
-
-> **Note:** `rebuild_bigquery.ts` should be used when BigQuery data becomes stale or polluted with test duplicates. It uses `table.delete()` + `createTable()` to bypass the free-tier DML restriction.
+*   `npx tsx prisma/seed.ts` — Resets Supabase PostgreSQL and seeds pristine dummy clinical records.
+*   `npx tsx prisma/backfill_bigquery.ts` — Syncs offline transactional database checkups directly to BigQuery tables.
+*   `npx tsx prisma/rebuild_bigquery.ts` — Drops the BigQuery analytics schema and runs a clean tables re-creation cycle.
 
 ---
 
 ## Test Credentials
 
-| Role | Mobile | Password |
+| Portal | Identifier / Mobile | Password / CNIC |
 |---|---|---|
-| **LHW** | `03003333333` | `Maternalink123$` |
-| **Patient (Sajida Bibi)** | `03001234567` | `Maternalink123$` |
+| **Admin Command HQ** | `03001111111` | `Maternalink123$` |
+| **Staff Dashboard** | `03002222222` | `Maternalink123$` |
+| **Patient Care View** | `03001234567` | `44301-1234567-8` |
 
 ---
-
-## Project Structure
-
-```
-Maternalink/
-├── prisma/
-│   ├── schema.prisma              # Database schema (Prisma)
-│   ├── seed.ts                    # Test data seeder
-│   ├── backfill_bigquery.ts       # Sync Postgres → BigQuery
-│   └── rebuild_bigquery.ts        # Full clean rebuild of BigQuery
-│
-├── src/
-│   ├── lib/
-│   │   ├── db.ts                  # Prisma client singleton
-│   │   ├── session.ts             # JWT session create/verify
-│   │   └── hash.ts                # bcrypt password hashing
-│   │
-│   ├── services/
-│   │   ├── openrouter.ts          # Gemma 4 AI risk analysis engine
-│   │   └── bigquery.ts            # BigQuery DW streaming + querying
-│   │
-│   ├── pages/
-│   │   ├── index.astro            # Landing page / marketing
-│   │   ├── login.astro            # Unified login for all roles
-│   │   ├── logout.ts              # Session cookie clear
-│   │   ├── admin/dashboard.astro  # Admin analytics portal
-│   │   ├── lhw/dashboard.astro    # LHW field data collection portal
-│   │   ├── nurse/dashboard.astro  # Nurse clinical monitoring portal
-│   │   ├── patient/dashboard.astro# Patient personal health portal
-│   │   └── api/
-│   │       └── ai/
-│   │           ├── chat.ts        # AI chat assistant endpoint
-│   │           └── transcribe.ts  # Urdu voice transcript endpoint
-│   │
-│   └── layouts/
-│       └── Layout.astro           # Base HTML layout wrapper
-│
-├── public/                        # Static assets (images, icons)
-├── maternalink-analytics-key.json # GCP Service Account key (DO NOT COMMIT)
-├── .env                           # Environment variables (DO NOT COMMIT)
-├── package.json
-├── render.yaml                    # 🚀 Render.com Blueprint deployment spec
-├── astro.config.mjs
-├── context.md                     # 📘 Developer context & change log
-└── README.md                      # 📖 This file
-```
-
----
-
-## ⚠️ Important Notes
-
-- **Never commit** `.env` or `maternalink-analytics-key.json` to version control
-- BigQuery batch load jobs have a **1–2 minute propagation delay** before counts update in the dashboard
-- The app **auto-falls back** to PostgreSQL if BigQuery is unavailable — zero downtime for LHWs
-- All clinical actions are immutably logged in `AuditLog` for accountability
-- **Zero-Config Cloud Hosting Support** — In addition to reading the physical `maternalink-analytics-key.json` file, the BigQuery client automatically resolves inline `GCP_CLIENT_EMAIL` and `GCP_PRIVATE_KEY` environment variables. This enables zero-config deployment on Vercel and Render without physical key file requirements.
+*Maternalink — Empowering Frontline Maternal Healthcare with Safety, Dignity, and Intelligence.*

@@ -584,3 +584,147 @@ Clinical Director Response:
   }
 }
 
+
+
+// =====================================================================
+// AI VISIT PREDICTION ENGINE
+// Generates a longitudinal clinical prediction based on patient history.
+// Called every time a new visit is recorded by staff.
+// =====================================================================
+
+export interface VisitHistory {
+  visitDate: Date;
+  gestationalWeeks: number;
+  systolicBP: number;
+  diastolicBP: number;
+  hemoglobin: number;
+  weight: number;
+  fetalHeartRate?: number | null;
+  symptoms: string;
+  medications: string | null;
+  riskCategory: string;
+  riskScore: number;
+}
+
+export interface NewVisitData {
+  gestationalWeeks: number;
+  systolicBP: number;
+  diastolicBP: number;
+  hemoglobin: number;
+  weight: number;
+  fetalHeartRate?: number;
+  symptoms: string[];
+  medications: string;
+  riskCategory: string;
+  riskScore: number;
+}
+
+export async function generateVisitPrediction(
+  patientName: string,
+  gravida: number,
+  parity: number,
+  history: VisitHistory[],
+  newVisit: NewVisitData
+): Promise<string> {
+  if (!OPENROUTER_API_KEY) {
+    return generateFallbackPrediction(history, newVisit);
+  }
+
+  const historySummary = history.length > 0
+    ? history.slice(-5).map((v, i) => {
+        const syms = (() => { try { return JSON.parse(v.symptoms).join(', '); } catch { return v.symptoms; } })();
+        return `Visit ${i + 1} (Wk ${v.gestationalWeeks}, ${new Date(v.visitDate).toLocaleDateString()}): BP ${v.systolicBP}/${v.diastolicBP}, Hb ${v.hemoglobin}, Wt ${v.weight}kg, Risk: ${v.riskCategory} (${v.riskScore}), Meds: ${v.medications || 'None'}, Symptoms: ${syms}`;
+      }).join('\n')
+    : 'No prior visit history (first visit).';
+
+  const prompt = `You are a senior obstetric AI assistant. Analyze this patient data and generate a concise, evidence-based clinical prediction (3-5 sentences max).
+
+PATIENT: ${patientName} | Gravida ${gravida}, Parity ${parity}
+
+PRIOR VISIT HISTORY (last 5 visits):
+${historySummary}
+
+NEW VISIT:
+- Gestational Age: ${newVisit.gestationalWeeks} weeks
+- Blood Pressure: ${newVisit.systolicBP}/${newVisit.diastolicBP} mmHg
+- Hemoglobin: ${newVisit.hemoglobin} g/dL
+- Weight: ${newVisit.weight} kg
+- Fetal Heart Rate: ${newVisit.fetalHeartRate || 'Not recorded'}
+- Symptoms: ${newVisit.symptoms.join(', ') || 'None'}
+- Medications: ${newVisit.medications || 'None prescribed'}
+- Risk Category: ${newVisit.riskCategory} (Score: ${newVisit.riskScore}/100)
+
+Based on the TREND from prior visits, generate a clinical prediction. Are medications working? What should staff watch for next? Include red flags or positive signs. Plain text, no markdown.`;
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://maternalink.app',
+        'X-Title': 'Maternalink Visit Prediction'
+      },
+      body: JSON.stringify({
+        model: GEMMA_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 300,
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      return generateFallbackPrediction(history, newVisit);
+    }
+
+    const data = await response.json() as any;
+    const prediction = data.choices?.[0]?.message?.content?.trim();
+    return prediction || generateFallbackPrediction(history, newVisit);
+  } catch (err) {
+    console.error('[AI Prediction] Error:', err);
+    return generateFallbackPrediction(history, newVisit);
+  }
+}
+
+function generateFallbackPrediction(history: VisitHistory[], newVisit: NewVisitData): string {
+  const parts: string[] = [];
+
+  if (history.length >= 2) {
+    const prev = history[history.length - 1];
+    const bpTrend = newVisit.systolicBP - prev.systolicBP;
+    if (bpTrend > 10) {
+      parts.push(`Blood pressure has risen by ${bpTrend} mmHg since the last visit — monitor closely for pre-eclampsia progression.`);
+    } else if (bpTrend < -10) {
+      parts.push(`Blood pressure has improved by ${Math.abs(bpTrend)} mmHg — current antihypertensive therapy appears effective.`);
+    } else {
+      parts.push(`BP remains relatively stable at ${newVisit.systolicBP}/${newVisit.diastolicBP} mmHg.`);
+    }
+    const hbTrend = newVisit.hemoglobin - prev.hemoglobin;
+    if (hbTrend > 0.5) {
+      parts.push(`Hemoglobin has improved by ${hbTrend.toFixed(1)} g/dL — iron therapy is yielding positive results.`);
+    }
+  }
+
+  if (newVisit.hemoglobin < 7.0) {
+    parts.push(`Hemoglobin critically low (${newVisit.hemoglobin} g/dL). Urgent referral for blood transfusion assessment recommended.`);
+  } else if (newVisit.hemoglobin < 10.0) {
+    parts.push(`Hemoglobin at ${newVisit.hemoglobin} g/dL indicates moderate anemia — continue double-dose iron therapy and verify diet.`);
+  }
+
+  if (newVisit.riskCategory === 'CRITICAL') {
+    parts.push(`Patient is in CRITICAL risk category. Immediate clinical escalation and emergency dispatch must be considered.`);
+  } else if (newVisit.riskCategory === 'HIGH') {
+    parts.push(`Patient remains HIGH risk. Increase visit frequency to weekly and ensure emergency hospital contact is confirmed.`);
+  }
+
+  const weeksToGo = 40 - newVisit.gestationalWeeks;
+  if (weeksToGo > 0 && weeksToGo <= 8) {
+    parts.push(`Approximately ${weeksToGo} weeks until estimated delivery — prioritize birth preparedness planning and confirm facility delivery.`);
+  }
+
+  if (history.length === 0) {
+    parts.push(`First visit recorded. Baseline vitals established. Schedule follow-up in 4 weeks per standard antenatal care protocol.`);
+  }
+
+  return parts.join(' ') || `Patient at ${newVisit.gestationalWeeks} weeks gestation. Continue monitoring per standard antenatal care protocol.`;
+}

@@ -94,7 +94,7 @@ const user = sessionCookie ? verifySession(sessionCookie) : null;
       <!-- CTA -->
       <div>
         {user ? (
-          <a href={user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'NURSE' ? '/nurse/dashboard' : '/lhw/dashboard'} class="bg-white hover:bg-slate-100 text-[#1c1421] font-extrabold text-[9px] uppercase tracking-widest py-2 px-4 sm:px-5.5 rounded-full shadow-sm transition-all duration-300">
+          <a href={user.role === 'ADMIN' ? '/admin/dashboard' : (user.role === 'NURSE' || user.role === 'LHW') ? '/staff/dashboard' : '/patient/dashboard'} class="bg-white hover:bg-slate-100 text-[#1c1421] font-extrabold text-[9px] uppercase tracking-widest py-2 px-4 sm:px-5.5 rounded-full shadow-sm transition-all duration-300">
             Console
           </a>
         ) : (
@@ -128,7 +128,7 @@ const user = sessionCookie ? verifySession(sessionCookie) : null;
     <!-- Center CTA -->
     <div class="mt-8 flex justify-center">
       {user ? (
-        <a href={user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'NURSE' ? '/nurse/dashboard' : '/lhw/dashboard'} class="bg-[#1c1421] hover:bg-[#2e2336] text-white font-extrabold text-[10px] tracking-widest uppercase py-3.5 px-8 sm:px-9 rounded-full shadow-md transition-all duration-300 hover:scale-[1.01]">
+        <a href={user.role === 'ADMIN' ? '/admin/dashboard' : (user.role === 'NURSE' || user.role === 'LHW') ? '/staff/dashboard' : '/patient/dashboard'} class="bg-[#1c1421] hover:bg-[#2e2336] text-white font-extrabold text-[10px] tracking-widest uppercase py-3.5 px-8 sm:px-9 rounded-full shadow-md transition-all duration-300 hover:scale-[1.01]">
           Resume Command Console
         </a>
       ) : (

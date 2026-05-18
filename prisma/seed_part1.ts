@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import { PrismaClient, Role, RiskCategory, Severity } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
@@ -15,6 +15,7 @@ function rnd(min: number, max: number, dec = 0) {
   return dec ? parseFloat(v.toFixed(dec)) : Math.round(v);
 }
 function daysAgo(d: number) { const dt = new Date(); dt.setDate(dt.getDate() - d); return dt; }
+function weeksAgo(w: number) { return daysAgo(w * 7); }
 
 const MEDS_BY_RISK: Record<string, string[]> = {
   LOW: ['Iron 60mg OD', 'Folic Acid 5mg OD', 'Calcium 500mg BD'],
@@ -62,10 +63,6 @@ function getRiskCat(score: number): RiskCategory {
   return RiskCategory.LOW;
 }
 
-const firstNames = ['Zainab', 'Ayesha', 'Fatima', 'Sajida', 'Nusrat', 'Shazia', 'Saba', 'Hina', 'Maryam', 'Khadija', 'Rukhsana', 'Parveen', 'Bushra', 'Sadia', 'Amna'];
-const lastNames = ['Bibi', 'Mai', 'Khatoon', 'Begum'];
-const villages = ['Diplo', 'Chachro', 'Mithi', 'Islamkot', 'Nagarparkar'];
-
 async function main() {
   console.log('Cleaning database...');
   await prisma.auditLog.deleteMany({});
@@ -90,122 +87,9 @@ async function main() {
   const s2    = await prisma.user.create({ data: { name: 'Staff Rukhsana Malik', mobile: '03003333333', password: pw, role: Role.STAFF, cnic: '44301-3333333-3', healthFacilityId: clinic.id } });
   const s3    = await prisma.user.create({ data: { name: 'Staff Hina Siddiqui', mobile: '03004444444', password: pw, role: Role.STAFF, cnic: '44301-4444444-4', healthFacilityId: clinic.id } });
 
-  console.log('Staff created. Seeding 60 patients...');
+  console.log('Staff created. Seeding patients...');
 
   const staffPool = [s1, s2, s3];
   const facilityPool = [hospital, clinic];
 
-  for (let i = 0; i < 60; i++) {
-    const name = `${firstNames[rnd(0, firstNames.length - 1)]} ${lastNames[rnd(0, lastNames.length - 1)]}`;
-    const facility = facilityPool[rnd(0, 1)];
-    const staff = staffPool[rnd(0, 2)];
-    
-    const patient = await prisma.patient.create({
-      data: {
-        name,
-        mobile: `+92300${rnd(1000000, 9999999)}`,
-        cnic: `44301-${rnd(1000000, 9999999)}-${rnd(1, 9)}`,
-        age: rnd(18, 40),
-        address: `${villages[rnd(0, villages.length - 1)]} Village, Tharparkar`,
-        healthFacilityId: facility.id,
-        staffId: staff.id,
-      }
-    });
-
-    const isFirstPreg = rnd(0, 1) === 0;
-    const gravida = isFirstPreg ? 1 : rnd(2, 5);
-    const parity = isFirstPreg ? 0 : gravida - rnd(1, 2);
-    
-    // Determine how far along they are
-    const currentGestationalWeeks = rnd(8, 38);
-    const daysPregnant = currentGestationalWeeks * 7;
-    const expectedDueDate = daysAgo(-(280 - daysPregnant));
-    const startDate = daysAgo(daysPregnant);
-
-    const preg = await prisma.pregnancy.create({
-      data: {
-        patientId: patient.id,
-        gravida,
-        parity,
-        startDate,
-        expectedDueDate,
-        isActive: true
-      }
-    });
-
-    // Generate visits
-    const numVisits = Math.max(1, Math.floor(currentGestationalWeeks / 4));
-    let lastSys = rnd(100, 130);
-    let lastDia = rnd(60, 80);
-    let lastHb = rnd(8, 13, 1);
-    let currentWeight = rnd(50, 70, 1);
-
-    for (let v = 0; v < numVisits; v++) {
-      const visitWeek = Math.floor(currentGestationalWeeks * ((v + 1) / numVisits));
-      const visitDate = daysAgo((currentGestationalWeeks - visitWeek) * 7);
-      
-      // Slightly drift vitals to create a history
-      lastSys += rnd(-5, 8);
-      lastDia += rnd(-5, 5);
-      lastHb += rnd(-0.5, 0.5, 1);
-      currentWeight += rnd(0.5, 1.5, 1);
-      
-      let score = 10;
-      if (lastSys >= 140 || lastDia >= 90) score += 30;
-      if (lastSys >= 160 || lastDia >= 110) score += 40;
-      if (lastHb < 10) score += 20;
-      if (lastHb < 7) score += 40;
-
-      const riskCat = getRiskCat(score);
-      const meds = getMeds(riskCat);
-      const prediction = getPrediction(riskCat);
-
-      const isLastVisit = v === numVisits - 1;
-
-      const visit = await prisma.visit.create({
-        data: {
-          pregnancyId: preg.id,
-          visitDate,
-          gestationalWeeks: visitWeek,
-          systolicBP: lastSys,
-          diastolicBP: lastDia,
-          hemoglobin: lastHb,
-          weight: currentWeight,
-          fetalHeartRate: visitWeek >= 12 ? rnd(120, 160) : null,
-          symptoms: JSON.stringify(riskCat === 'HIGH' || riskCat === 'CRITICAL' ? ['headache', 'swelling'] : ['None']),
-          voiceTranscript: isLastVisit ? 'Routine checkup completed.' : 'Previous checkup.',
-          riskScore: score,
-          riskCategory: riskCat,
-          medications: meds,
-          adviceUrdu: 'باقاعدگی سے آئرن کی گولیاں کھائیں اور آرام کریں۔',
-          aiPrediction: prediction
-        }
-      });
-
-      if (riskCat === RiskCategory.HIGH || riskCat === RiskCategory.CRITICAL) {
-        await prisma.alert.create({
-          data: {
-            visitId: visit.id,
-            type: riskCat === RiskCategory.CRITICAL ? 'EMERGENCY_OBSTETRIC_CARE' : 'HIGH_RISK_TRIGGER',
-            severity: riskCat === RiskCategory.CRITICAL ? Severity.CRITICAL : Severity.HIGH,
-            message: `Auto alert for elevated risk: ${lastSys}/${lastDia} BP, ${lastHb} Hb.`,
-            isDispatched: riskCat === RiskCategory.CRITICAL,
-            resolved: !isLastVisit
-          }
-        });
-      }
-    }
-  }
-
-  console.log('Seed complete!');
-}
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-    await pool.end();
-  });
+  const patients = [

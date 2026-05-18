@@ -11,8 +11,7 @@ datasource db {
 
 enum Role {
   ADMIN
-  NURSE
-  LHW
+  STAFF
 }
 
 enum RiskCategory {
@@ -51,11 +50,11 @@ model User {
   name             String
   mobile           String          @unique
   password         String
-  role             Role            @default(LHW)
+  role             Role            @default(STAFF)
   cnic             String?
   healthFacilityId Int?
   healthFacility   HealthFacility? @relation(fields: [healthFacilityId], references: [id], onDelete: SetNull)
-  assignedPatients Patient[]       @relation("LHWPatients")
+  assignedPatients Patient[]       @relation("StaffPatients")
   resolvedAlerts   Alert[]         @relation("AlertResolver")
   auditLogs        AuditLog[]
   createdAt        DateTime        @default(now())
@@ -70,8 +69,8 @@ model Patient {
   address          String?
   healthFacilityId Int
   healthFacility   HealthFacility @relation(fields: [healthFacilityId], references: [id], onDelete: Cascade)
-  lhwId            String
-  lhw              User           @relation("LHWPatients", fields: [lhwId], references: [id], onDelete: Cascade)
+  staffId          String
+  staff            User           @relation("StaffPatients", fields: [staffId], references: [id], onDelete: Cascade)
   pregnancies      Pregnancy[]
   createdAt        DateTime       @default(now())
 }
@@ -90,24 +89,25 @@ model Pregnancy {
 }
 
 model Visit {
-  id              String       @id @default(uuid())
-  pregnancyId     String
-  pregnancy       Pregnancy    @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
-  visitDate       DateTime     @default(now())
+  id               String       @id @default(uuid())
+  pregnancyId      String
+  pregnancy        Pregnancy    @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
+  visitDate        DateTime     @default(now())
   gestationalWeeks Int
-  systolicBP      Int
-  diastolicBP     Int
-  hemoglobin      Float
-  weight          Float
-  fetalHeartRate  Int?
-  symptoms        String       // JSON array of selected symptoms
-  voiceTranscript String?      // Urdu transcript text
-  riskScore       Int          @default(0)
-  riskCategory    RiskCategory @default(LOW)
-  medications     String?
-  adviceUrdu      String?      // Gemma generated Urdu advice card
-  alerts          Alert[]
-  createdAt       DateTime     @default(now())
+  systolicBP       Int
+  diastolicBP      Int
+  hemoglobin       Float
+  weight           Float
+  fetalHeartRate   Int?
+  symptoms         String       // JSON array of selected symptoms
+  voiceTranscript  String?      // voice/text note from staff
+  riskScore        Int          @default(0)
+  riskCategory     RiskCategory @default(LOW)
+  medications      String?      // CSV of prescribed medications
+  adviceUrdu       String?      // AI-generated Urdu advice card
+  aiPrediction     String?      // AI-generated prediction & insights based on longitudinal history
+  createdAt        DateTime     @default(now())
+  alerts           Alert[]
 }
 
 model Alert {

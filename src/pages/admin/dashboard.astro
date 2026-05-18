@@ -37,8 +37,7 @@ if (Astro.request.method === 'POST') {
       } else {
         const hashedPassword = hashPassword("Maternalink123$");
         
-        let workerRole = Role.LHW;
-        if (roleStr === 'NURSE') workerRole = Role.NURSE;
+        let workerRole = Role.STAFF;
         if (roleStr === 'ADMIN') workerRole = Role.ADMIN;
 
         await db.user.create({
@@ -93,6 +92,24 @@ if (Astro.request.method === 'POST') {
 
           successMessage = `Emergency dispatch released! Ambulance and clinical support routed.`;
         }
+      }
+    } else if (action === 'create-district') {
+      const districtName = formData.get('districtName')?.toString().trim() || '';
+      if (!districtName) {
+        errorMessage = 'District name is required.';
+      } else {
+        await db.district.create({
+          data: { name: districtName }
+        });
+        
+        await db.auditLog.create({
+          data: {
+            userId: user.id,
+            action: 'CREATE_DISTRICT',
+            details: `Admin created new District: ${districtName}.`
+          }
+        });
+        successMessage = `Successfully created district ${districtName}.`;
       }
     }
   } catch (err) {
@@ -280,8 +297,7 @@ body{font-family:'Outfit',sans-serif;}
           <div>
             <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">System Role</label>
             <select name="role" required class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all">
-              <option value="LHW">Lady Health Worker (LHW)</option>
-              <option value="NURSE">Facility Nurse</option>
+              <option value="STAFF">Frontline Staff (LHW/Nurse)</option>
               <option value="ADMIN">Sub-Administrator</option>
             </select>
           </div>
@@ -321,7 +337,7 @@ body{font-family:'Outfit',sans-serif;}
                     </div>
                   </td>
                   <td class="py-3 px-3">
-                    <span class={`text-[7px] font-black px-2 py-0.5 rounded-full border uppercase tracking-widest ${w.role==='ADMIN'?'bg-purple-100 text-purple-700 border-purple-200':w.role==='NURSE'?'bg-amber-100 text-amber-700 border-amber-200':'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>{w.role}</span>
+                    <span class={`text-[7px] font-black px-2 py-0.5 rounded-full border uppercase tracking-widest ${w.role==='ADMIN'?'bg-purple-100 text-purple-700 border-purple-200':'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>{w.role}</span>
                   </td>
                   <td class="py-3 px-3 font-bold text-[#5c4a63]">{w.mobile}</td>
                   <td class="py-3 px-3 font-bold text-[#5c4a63]">{w.healthFacility?.name||'District Admin'}</td>
@@ -331,6 +347,20 @@ body{font-family:'Outfit',sans-serif;}
             </tbody>
           </table>
         </div>
+        
+        <h3 class="text-sm font-black text-[#3b2f42] flex items-center gap-2 mt-8">
+          <span class="w-1 h-5 bg-emerald-500 rounded-full"></span>District Administration
+        </h3>
+        <form method="POST" class="flex gap-4 p-5 bg-[#f7f0f9]/60 border border-[#9b6fa0]/10 rounded-2xl">
+          <input type="hidden" name="action" value="create-district"/>
+          <div class="flex-1">
+            <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">New District Name</label>
+            <input type="text" name="districtName" required placeholder="e.g. Hyderabad" class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] placeholder-[#9b6fa0]/40 focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all"/>
+          </div>
+          <button type="submit" class="self-end py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest uppercase rounded-xl transition-all cursor-pointer shadow-md">
+            + Create District
+          </button>
+        </form>
       </div>
 
       <!-- RIGHT COLUMN: Emergency Control Center & Audit Log Activity (1 col wide) -->
