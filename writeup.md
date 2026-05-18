@@ -1,11 +1,9 @@
-# 🌸 Maternalink — Real-Time Obstetric AI Telemetry & Privacy-First Research Sandbox
+# Maternalink — Real-Time Obstetric AI Telemetry & Privacy-First Research Sandbox
 
-## 🏆 Project Writeup & Technical Submission
+## Project Writeup & Technical Submission
 
 ### Co-developed in the spirit of AI Accessibility and Frontline Motherhood Protection
 *Bridging the gap between rural Pakistani health worker dictation, real-time Google BigQuery analytics, and Google Gemma AI risk analysis.*
-
----
 
 ## 1. Executive Summary & Problem Space
 
@@ -21,17 +19,9 @@ According to **Gates Foundation** reports, Pakistan continues to face a critical
 2.  **Fragmented Baselines:** expectant mothers are often checked only once, leaving clinical facilities without any time-series record of blood pressure or hemoglobin trajectory.
 3.  **Data Silos & Privacy Roadblocks:** Medical researchers need live patient telemetry to train predictive pregnancy models, but sharing active clinical datasets violates core PII (Personally Identifiable Information) laws.
 
----
-
 ## 2. The Maternalink Solution
 
-Maternalink is a **server-side rendered (SSR) web console** built on AstroJS and Node.js. It acts as a real-time, bi-directional telemetry gateway connecting local health workers, clinic facility staff, district supervisors, and AI researchers through three pillars:
-
-*   🎙️ **Urdu Speech-to-Sign Telemetry:** Health workers dictate checkups naturally in Urdu. Gemma AI parses raw speech transcripts to extract clinical danger signs.
-*   📊 **Dual-Layer Bi-directional Analytics:** Clinical metrics stream instantly into high-performance **Google BigQuery** tables with an automatic, zero-downtime transactional fail-safe fallback to a local PostgreSQL instance.
-*   🔒 **Privacy-Preserving Sandbox API:** Encrypts clinical datasets using SHA-256 patient ID pseudonymization and strips all direct PII, allowing AI researchers to pull de-identified time-series data via a secure REST API.
-
----
+Maternalink is a **server-side rendered (SSR) web console** built on AstroJS and Node.js. It acts as a real-time, bi-directional telemetry gateway connecting local health workers, clinic facility staff, district supervisors, and AI researchers.
 
 ## 3. Core AI Architecture & Gemma-4 Engine
 
@@ -69,8 +59,6 @@ Respond strictly in this JSON format:
 ### Prompt Safety & Output Reliability
 By forcing a strict JSON schema parsing response, Maternalink guarantees that the client-side state machine can safely interpret the risk level to trigger emergency notifications or dispatch alerts instantly without risk of LLM formatting hallucinations.
 
----
-
 ## 4. Privacy-First Medical Research Sandbox (`/api/labs`)
 
 A core innovation of Maternalink is the **Labs & AI Explorer Console**. It addresses the medical research bottleneck by serving a fully anonymized clinical dataset, gated behind the authorization key `MATERNALINK_LABS_KEY_2026`.
@@ -82,8 +70,6 @@ To guarantee complete patient privacy while preserving longitudinal time-series 
     $$\text{Anonymized ID} = \text{SHA256}(\text{Patient ID} + \text{Internal Server Salt})$$
     This allows researchers to correlate historical checkups for the same patient over time without exposing their real-world identity.
 3.  **Labs Console GUI:** Features a premium interactive query builder that compiles cURL commands in real time, letting researchers test API calls, see live JSON output, and copy working terminal scripts instantly.
-
----
 
 ## 5. Technical Architecture & Data Sync
 
@@ -129,8 +115,6 @@ When the frontend database transaction completes:
 2.  Maternalink asynchronously attempts to sync the record to BigQuery using JSON batch loading jobs (`NEWLINE_DELIMITED_JSON`) to avoid API streaming costs.
 3.  If BigQuery variables are unconfigured or GCP sandboxing limits are reached, the dashboard immediately falls back to PostgreSQL transactions, ensuring **zero downtime** for frontline clinicians.
 
----
-
 ## 6. Elegant, Serene Frontend UX
 
 Maternalink shuns default templates in favor of a customized, high-end design system tailored to maternal healthcare:
@@ -143,8 +127,6 @@ Maternalink shuns default templates in favor of a customized, high-end design sy
 ### The Unified Patient Cohort Ledger
 *   **Click-to-Expand Vitals Details:** Clinical staff can click any patient row in the Ledger to reveal a beautiful, expandable in-line panel.
 *   **Longitudinal History Cards:** Displays full clinical histories, graphing historical BP changes, hemoglobin counts, urinary protein levels, medications, and Urdu advice transcripts side by side.
-
----
 
 ## 7. Setup & Validation Guide
 
@@ -168,8 +150,6 @@ GCP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvgIBA..."
 *   `npx tsx prisma/seed.ts` — Resets local tables and seeds mock clinical histories.
 *   `npx tsx prisma/backfill_bigquery.ts` — Backfills existing PostgreSQL data directly into Google BigQuery.
 *   `npx tsx prisma/rebuild_bigquery.ts` — Drops BigQuery tables and reconstructs the data warehouse from clean Postgres seeds.
-
----
 
 ## 8. Summary of Clinical Impact
 By translating dictation speech to structured vitals, parsing danger indicators using **Gemma AI**, and serving de-identified historical data via BigQuery to medical researchers, Maternalink represents a vital step forward in bridging clinical resources to Tharparkar and rural Pakistan—saving mothers' lives through safety, dignity, and modern technology.
