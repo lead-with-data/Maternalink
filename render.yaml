@@ -14,9 +14,13 @@ services:
         sync: false
         placeholder: "sk-or-v1-..."
       - key: GEMMA_MODEL
-        value: google/gemma-4-31b-it:free
+        value: google/gemma-2-9b-it:free
       - key: JWT_SECRET
         generateValue: true
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
       - key: GCP_PROJECT_ID
         value: maternalink-analytics
       - key: GCP_DATASET_ID

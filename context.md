@@ -12,6 +12,14 @@
 
 ## 📅 Change Log
 
+### [2026-05-18] — Render.com Port-Binding & Interface Alignment Fixes
+
+**What Changed:**
+1. **Server Interface & Host Configuration:** Configured Astro's standalone server in `astro.config.mjs` to bind to `0.0.0.0` and port `10000` (Render's internal interface standard) instead of defaulting to `localhost`, which was causing Render's port-scanning health check to time out.
+2. **Infrastructure Environment Alignment:** Updated the declarative `render.yaml` Blueprint to explicitly pass the `HOST` (`0.0.0.0`) and `PORT` (`10000`) environment variables to the Node SSR runner, and updated `GEMMA_MODEL` to target `google/gemma-2-9b-it:free`.
+
+---
+
 ### [2026-05-18] — Gemma AI Assistant Fixes: Staff Authorization & OpenRouter Integration
 
 **What Changed:**
