@@ -1,0 +1,66 @@
+/* Import Google Fonts at the absolute top */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+/* Brand Design Tokens — Light Theme System (Tailwind v4 compliant) */
+@theme {
+  --color-canvas-void: #fffbf9;
+  --color-surface-card: #ffffff;
+  --color-brand-dusk: #9b6fa0;
+  --color-brand-sand: #c47c3a;
+  --color-trigger-vis: #4a7c59;
+  --color-alert-crimson: #dc2626;
+
+  --font-sans: 'Outfit', sans-serif;
+  --font-mono: 'Inter', sans-serif;
+  --font-urdu: 'Noto Naskh Arabic', serif;
+}
+
+/* Base Body Styles — Warm Light Theme */
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #fffbf9;
+  color: #3b2f42; /* Strict Brand Plum text as per design system */
+  font-family: 'Outfit', sans-serif;
+  scroll-behavior: smooth;
+}
+
+/* Maternalink Frosted Glass Card — Light Theme (Completely stable, no jumps or translate offsets) */
+.maternalink-bento-card {
+  background: rgba(255, 255, 255, 0.70);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(24px) saturate(120%);
+  border-radius: 28px; /* Correct outer radius matching design.md */
+  padding: 24px;
+  box-shadow: 0 4px 24px rgba(44, 29, 48, 0.03), 0 1px 4px rgba(44, 29, 48, 0.02);
+  transition: border-color 0.3s cubic-bezier(0.25, 1, 0.5, 1),
+              box-shadow 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.maternalink-bento-card:hover {
+  border-color: rgba(155, 111, 160, 0.25);
+  box-shadow: 0 8px 30px rgba(44, 29, 48, 0.05);
+}
+
+/* Custom Scrollbars — light theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f4eef8;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(155, 111, 160, 0.2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 111, 160, 0.4);
+}

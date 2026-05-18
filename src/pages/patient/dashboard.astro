@@ -1,0 +1,383 @@
+﻿---
+import Layout from '../../layouts/Layout.astro';
+import { db } from '../../lib/db';
+import { verifySession } from '../../lib/session';
+
+const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
+const user = sessionCookie ? verifySession(sessionCookie) : null;
+
+if (!user || user.role !== 'PATIENT') {
+  return Astro.redirect('/login');
+}
+
+const patient = await db.patient.findUnique({
+  where: { id: user.id },
+  include: {
+    healthFacility: true,
+    lhw: true,
+    pregnancies: {
+      include: {
+        visits: {
+          orderBy: { visitDate: 'desc' }
+        }
+      }
+    }
+  }
+});
+
+if (!patient) {
+  return Astro.redirect('/login');
+}
+
+const activePregnancy = patient.pregnancies.find(p => p.isActive === true);
+const visits = activePregnancy ? activePregnancy.visits : [];
+const latestVisit = visits.length > 0 ? visits[0] : null;
+
+const gestationalAgeWeeks = latestVisit ? latestVisit.gestationalWeeks : 28;
+const expectedDueDate = activePregnancy ? new Date(activePregnancy.expectedDueDate).toLocaleDateString('en-US', {
+  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+}) : 'Not Scheduled';
+const daysUntilDue = activePregnancy ? Math.max(0, Math.ceil((new Date(activePregnancy.expectedDueDate).getTime() - Date.now()) / (1000*60*60*24))) : 0;
+const startDate = activePregnancy ? new Date(activePregnancy.startDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'N/A';
+const trimester = gestationalAgeWeeks <= 13 ? '1st' : gestationalAgeWeeks <= 26 ? '2nd' : '3rd';
+
+const systolic = latestVisit ? latestVisit.systolicBP : 120;
+const diastolic = latestVisit ? latestVisit.diastolicBP : 80;
+const hemoglobin = latestVisit ? latestVisit.hemoglobin : 11.5;
+const weight = latestVisit ? latestVisit.weight : 62;
+const fhr = latestVisit?.fetalHeartRate || 140;
+const riskCategory = latestVisit ? latestVisit.riskCategory : 'LOW';
+const adviceUrdu = latestVisit?.adviceUrdu || "باقاعدگی سے آرام کریں، آئرن اور فولک ایسڈ کی گولیاں وقت پر کھائیں اور متوازن غذا کا استعمال جاری رکھیں۔";
+const medications = latestVisit?.medications || "Iron Folic Acid Supplement (1 Daily)";
+
+const chartVisits = [...visits].reverse().slice(-6);
+const bpSysSeries = chartVisits.map(v => v.systolicBP);
+const bpDiaSeries = chartVisits.map(v => v.diastolicBP);
+const hbSeries = chartVisits.map(v => Number(v.hemoglobin));
+const weightSeries = chartVisits.map(v => Number(v.weight));
+const visitLabels = chartVisits.map(v => new Date(v.visitDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+
+function spark(data: number[], w=180, h=44): string {
+  if(data.length < 2) return `0,${h/2} ${w},${h/2}`;
+  const mn=Math.min(...data), mx=Math.max(...data), rng=mx-mn||1;
+  return data.map((v,i)=>{ const x=(i/(data.length-1))*w; const y=h-((v-mn)/rng)*(h-8)-4; return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(' ');
+}
+
+let riskBadge='bg-emerald-50 border-emerald-200 text-emerald-700', riskLabel='Low Risk', riskDot='bg-emerald-500';
+if(riskCategory==='MEDIUM'){riskBadge='bg-amber-50 border-amber-200 text-amber-700';riskLabel='Moderate';riskDot='bg-amber-500';}
+if(riskCategory==='HIGH'){riskBadge='bg-orange-50 border-orange-200 text-orange-800';riskLabel='High Risk';riskDot='bg-orange-500';}
+if(riskCategory==='CRITICAL'){riskBadge='bg-rose-50 border-rose-200 text-rose-700';riskLabel='Critical';riskDot='bg-rose-500';}
+
+const bpWarn = systolic>=140||diastolic>=90;
+const hbWarn = hemoglobin < 10;
+const gestPct = Math.min(100,Math.round((gestationalAgeWeeks/40)*100));
+const circumference = 2*Math.PI*54;
+const dashOffset = circumference - (gestPct/100)*circumference;
+---
+
+<Layout title={`${patient.name} | Expectant Mother Portal`}>
+<style is:global>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&display=swap');
+body{font-family:'Outfit',sans-serif;}
+.card-lift{transition:transform .2s,box-shadow .2s;}
+.card-lift:hover{transform:translateY(-3px);box-shadow:0 24px 48px rgba(44,29,48,.12);}
+.ring-dash{transition:stroke-dashoffset 1.4s cubic-bezier(.4,0,.2,1);}
+@keyframes hbeat{0%,100%{transform:scale(1);}14%{transform:scale(1.25);}28%{transform:scale(1);}}
+.hb-icon{animation:hbeat 1.4s ease infinite;}
+@keyframes sospulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5);}70%{box-shadow:0 0 0 14px rgba(239,68,68,0);}}
+.sos-pulse{animation:sospulse 2s infinite;}
+</style>
+
+<div class="min-h-screen flex flex-col relative overflow-x-hidden" style="background-image:linear-gradient(to bottom,rgba(28,20,33,.38),rgba(28,20,33,.68)),url('/login-signup.png');background-size:cover;background-position:center;background-attachment:fixed;">
+
+  <!-- NAVBAR -->
+  <header class="sticky top-4 z-40 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="bg-[#1c1421]/90 backdrop-blur-xl border border-white/10 rounded-[24px] px-6 py-4 flex items-center justify-between shadow-xl">
+      <div class="flex items-center gap-3">
+        <div class="w-3 h-3 rounded-full bg-gradient-to-tr from-[#fca27e] to-[#ebdcd5]"></div>
+        <div>
+          <h1 class="text-sm font-black text-white uppercase tracking-widest leading-none">Maternalink</h1>
+          <p class="text-[9px] text-[#fca27e] font-black tracking-widest uppercase mt-0.5">Expectant Mother Portal</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[9px] font-black uppercase tracking-widest ${riskBadge}`}>
+          <span class={`w-1.5 h-1.5 rounded-full ${riskDot} animate-pulse`}></span>{riskLabel}
+        </div>
+        <div class="text-right hidden sm:block">
+          <p class="text-xs font-bold text-white">{patient.name}</p>
+          <p class="text-[9px] text-white/50 font-mono">{trimester} Trimester · W{gestationalAgeWeeks}</p>
+        </div>
+        <a href="/logout" class="py-1.5 px-4 bg-white/10 hover:bg-rose-500/20 border border-white/15 text-white/70 hover:text-white text-[9px] font-bold uppercase tracking-widest rounded-full transition-all">Sign Out</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
+    <!-- HERO: Welcome + SOS -->
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mt-2">
+      <div>
+        <div class="inline-flex items-center gap-2 px-3 py-1 bg-white/95 backdrop-blur border border-white/60 rounded-full shadow-sm mb-3">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="text-[9px] font-black uppercase tracking-widest text-[#2c1d30]">Live Antenatal Care Plan</span>
+        </div>
+        <h2 class="text-3xl font-light text-white tracking-tight">Welcome, <span class="font-extrabold text-[#fca27e]">{patient.name}</span></h2>
+        <p class="text-[11px] text-white/60 font-medium mt-1">{patient.healthFacility.name} · LHW: {patient.lhw.name}</p>
+      </div>
+      <button id="sos-open" class="sos-pulse flex-shrink-0 flex items-center gap-2.5 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-black text-xs uppercase tracking-widest px-6 py-3.5 rounded-2xl shadow-2xl cursor-pointer transition-all">
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+        SOS Emergency
+      </button>
+    </div>
+
+    <!-- ROW 1: Gestational Ring + Vital KPI Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-5">
+      <!-- Gestational Ring -->
+      <div class="col-span-2 lg:col-span-1 card-lift backdrop-blur-xl bg-white/85 border border-white/60 shadow-2xl rounded-[32px] p-5 flex flex-col items-center justify-center">
+        <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-3">Gestational Progress</span>
+        <div class="relative w-28 h-28">
+          <svg class="w-28 h-28 -rotate-90" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(44,29,48,.07)" stroke-width="10"/>
+            <circle cx="60" cy="60" r="54" fill="none" stroke="url(#ggrad)" stroke-width="10" stroke-linecap="round" class="ring-dash" stroke-dasharray={`${circumference}`} stroke-dashoffset={`${dashOffset}`}/>
+            <defs><linearGradient id="ggrad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#fca27e"/><stop offset="100%" stop-color="#f472b6"/></linearGradient></defs>
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center">
+            <span class="text-3xl font-black text-[#2c1d30] leading-none">{gestationalAgeWeeks}</span>
+            <span class="text-[9px] text-[#765e82] font-bold">weeks</span>
+          </div>
+        </div>
+        <p class="text-[10px] font-bold text-[#fca27e] mt-3">{trimester} Trimester</p>
+        <p class="text-[8px] text-[#9d8aaa] mt-0.5">{gestPct}% complete</p>
+      </div>
+
+      <!-- BP -->
+      <div class={`card-lift backdrop-blur-xl border shadow-xl rounded-[32px] p-5 flex flex-col justify-between ${bpWarn?'bg-rose-50/90 border-rose-200':'bg-white/85 border-white/60'}`}>
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Blood Pressure</span>
+          <span class={`text-[7px] font-black px-1.5 py-0.5 rounded-full ${bpWarn?'bg-rose-100 text-rose-600':'bg-emerald-100 text-emerald-700'}`}>{bpWarn?'⚠ High':'✓ OK'}</span>
+        </div>
+        <div>
+          <p class={`text-2xl font-black leading-none ${bpWarn?'text-rose-600':'text-[#2c1d30]'}`}>{systolic}<span class="text-sm font-bold text-[#9d8aaa]">/{diastolic}</span></p>
+          <p class="text-[8px] text-[#9d8aaa] font-bold mt-1">mmHg · Last checkup</p>
+        </div>
+        {bpSysSeries.length>1&&(<svg class="w-full mt-2" height="36" viewBox="0 0 180 44" preserveAspectRatio="none"><polyline points={spark(bpSysSeries)} fill="none" stroke={bpWarn?'#f87171':'#34d399'} stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>)}
+      </div>
+
+      <!-- Hemoglobin -->
+      <div class={`card-lift backdrop-blur-xl border shadow-xl rounded-[32px] p-5 flex flex-col justify-between ${hbWarn?'bg-amber-50/90 border-amber-200':'bg-white/85 border-white/60'}`}>
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Hemoglobin</span>
+          <span class={`text-[7px] font-black px-1.5 py-0.5 rounded-full ${hbWarn?'bg-amber-100 text-amber-700':'bg-emerald-100 text-emerald-700'}`}>{hbWarn?'⚠ Low':'✓ OK'}</span>
+        </div>
+        <div>
+          <p class={`text-2xl font-black leading-none ${hbWarn?'text-amber-600':'text-[#2c1d30]'}`}>{hemoglobin}<span class="text-sm font-bold text-[#9d8aaa]"> g/dL</span></p>
+          <p class="text-[8px] text-[#9d8aaa] font-bold mt-1">Target 11–14 g/dL</p>
+        </div>
+        {hbSeries.length>1&&(<svg class="w-full mt-2" height="36" viewBox="0 0 180 44" preserveAspectRatio="none"><polyline points={spark(hbSeries)} fill="none" stroke={hbWarn?'#fbbf24':'#34d399'} stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>)}
+      </div>
+
+      <!-- Weight -->
+      <div class="card-lift backdrop-blur-xl bg-white/85 border border-white/60 shadow-xl rounded-[32px] p-5 flex flex-col justify-between">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Weight</span>
+          <span class="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">Tracked</span>
+        </div>
+        <div>
+          <p class="text-2xl font-black text-[#2c1d30] leading-none">{weight}<span class="text-sm font-bold text-[#9d8aaa]"> kg</span></p>
+          <p class="text-[8px] text-[#9d8aaa] font-bold mt-1">Maternal weight</p>
+        </div>
+        {weightSeries.length>1&&(<svg class="w-full mt-2" height="36" viewBox="0 0 180 44" preserveAspectRatio="none"><polyline points={spark(weightSeries)} fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>)}
+      </div>
+
+      <!-- FHR -->
+      <div class="card-lift backdrop-blur-xl bg-white/85 border border-white/60 shadow-xl rounded-[32px] p-5 flex flex-col justify-between">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Fetal Heart Rate</span>
+          <svg class="hb-icon w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/></svg>
+        </div>
+        <div>
+          <p class="text-2xl font-black text-rose-500 leading-none">{fhr}<span class="text-sm font-bold text-[#9d8aaa]"> bpm</span></p>
+          <p class="text-[8px] text-[#9d8aaa] font-bold mt-1">Normal 110–160</p>
+        </div>
+        <div class="mt-2 flex items-end gap-0.5 h-9">
+          {Array.from({length:12}).map((_,i)=>(
+            <div class="flex-1 rounded-full bg-rose-200" style={`height:${Math.max(4,Math.abs(Math.sin(i*0.9)*32))}px`}></div>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    <!-- ROW 2: Due Date + Visit History + Meds/LHW -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-5">
+      <!-- Due Date -->
+      <div class="card-lift backdrop-blur-xl bg-[#fcf8f2]/90 border border-amber-100 shadow-xl rounded-[32px] p-6">
+        <span class="text-[8px] font-black text-amber-700 uppercase tracking-widest">Expected Delivery Date</span>
+        <p class="text-lg font-black text-amber-950 mt-2 leading-snug">{expectedDueDate}</p>
+        <div class="flex items-baseline gap-1.5 mt-3">
+          <span class="text-4xl font-black text-[#fca27e]">{daysUntilDue}</span>
+          <span class="text-[10px] text-amber-700 font-bold">days remaining</span>
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3 border-t border-amber-100 pt-3">
+          <div><p class="text-[7px] font-black text-amber-700 uppercase tracking-widest">Gravida</p><p class="text-xl font-black text-amber-950">{activePregnancy?.gravida||1}</p></div>
+          <div><p class="text-[7px] font-black text-amber-700 uppercase tracking-widest">Parity</p><p class="text-xl font-black text-amber-950">{activePregnancy?.parity||0}</p></div>
+        </div>
+      </div>
+
+      <!-- Visit History -->
+      <div class="card-lift backdrop-blur-xl bg-white/85 border border-white/60 shadow-xl rounded-[32px] p-6">
+        <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Checkup History</span>
+        <div class="flex items-baseline gap-1.5 mt-2 mb-4">
+          <span class="text-4xl font-black text-[#2c1d30]">{visits.length}</span>
+          <span class="text-[10px] text-[#9d8aaa] font-bold">visits recorded</span>
+        </div>
+        <div class="space-y-2">
+          {visits.slice(0,4).map(v=>(
+            <div class="flex items-center justify-between">
+              <span class="text-[9px] text-[#9d8aaa]">{new Date(v.visitDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})}</span>
+              <span class="text-[9px] font-bold text-[#2c1d30]">BP {v.systolicBP}/{v.diastolicBP}</span>
+              <span class={`text-[7px] font-black px-1.5 py-0.5 rounded-full uppercase ${v.riskCategory==='CRITICAL'?'bg-rose-100 text-rose-600':v.riskCategory==='HIGH'?'bg-orange-100 text-orange-700':v.riskCategory==='MEDIUM'?'bg-amber-100 text-amber-700':'bg-emerald-100 text-emerald-700'}`}>{v.riskCategory}</span>
+            </div>
+          ))}
+          {visits.length===0&&<p class="text-[10px] text-[#9d8aaa] italic">No checkups recorded yet</p>}
+        </div>
+      </div>
+
+      <!-- Meds + LHW -->
+      <div class="card-lift backdrop-blur-xl bg-white/85 border border-white/60 shadow-xl rounded-[32px] p-6 flex flex-col justify-between">
+        <div>
+          <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Active Medications</span>
+          <div class="mt-2 p-3 bg-amber-50 border border-amber-100 rounded-2xl flex items-start gap-2">
+            <svg class="w-4 h-4 text-amber-600 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+            <p class="text-[10px] font-bold text-amber-900">{medications}</p>
+          </div>
+        </div>
+        <div class="border-t border-[#2c1d30]/5 pt-4">
+          <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Lady Health Worker</span>
+          <div class="flex items-center gap-3 mt-2">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-emerald-400 to-teal-500 flex items-center justify-center text-white font-black text-sm shrink-0">
+              {patient.lhw.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2)}
+            </div>
+            <div>
+              <p class="text-xs font-black text-[#2c1d30]">{patient.lhw.name}</p>
+              <a href={`tel:${patient.lhw.mobile}`} class="text-[9px] text-emerald-600 font-bold hover:underline">{patient.lhw.mobile}</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROW 3: Vitals Trend + Urdu Advice -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <!-- Vitals Trend Chart -->
+      <div class="card-lift backdrop-blur-xl bg-white/85 border border-white/60 shadow-xl rounded-[32px] p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <span class="text-[8px] font-black text-[#765e82] uppercase tracking-widest">Vitals Trend Analysis</span>
+            <p class="text-sm font-bold text-[#2c1d30] mt-0.5">Blood Pressure &amp; Hemoglobin</p>
+          </div>
+          <div class="flex items-center gap-3 text-[8px] font-bold text-[#9d8aaa]">
+            <span class="flex items-center gap-1"><span class="w-4 h-0.5 bg-rose-400 inline-block rounded"></span>Systolic</span>
+            <span class="flex items-center gap-1"><span class="w-4 h-0.5 bg-emerald-400 inline-block rounded" style="border-top:2px dashed #34d399;background:none;"></span>Hb×10</span>
+          </div>
+        </div>
+        {chartVisits.length<2?(
+          <div class="flex items-center justify-center h-28 bg-[#2c1d30]/3 rounded-2xl">
+            <p class="text-[10px] text-[#9d8aaa] font-bold">Log more checkups to see trend</p>
+          </div>
+        ):(
+          <div>
+            <svg class="w-full" height="90" viewBox="0 0 360 90" preserveAspectRatio="none">
+              <polyline points={spark(bpSysSeries,360,90)} fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points={spark(hbSeries.map((h:number)=>h*10),360,90)} fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 3"/>
+            </svg>
+            <div class="flex justify-between mt-1">
+              {visitLabels.map((l:string)=>(<span class="text-[7px] text-[#9d8aaa] font-bold">{l}</span>))}
+            </div>
+          </div>
+        )}
+        <div class="mt-4 grid grid-cols-3 gap-2">
+          <div class="bg-[#2c1d30]/4 rounded-xl p-2 text-center"><p class="text-[7px] text-[#765e82] uppercase font-black">Visits</p><p class="text-lg font-black text-[#2c1d30]">{visits.length}</p></div>
+          <div class="bg-[#2c1d30]/4 rounded-xl p-2 text-center"><p class="text-[7px] text-[#765e82] uppercase font-black">Last BP</p><p class="text-sm font-black text-[#2c1d30]">{systolic}/{diastolic}</p></div>
+          <div class="bg-[#2c1d30]/4 rounded-xl p-2 text-center"><p class="text-[7px] text-[#765e82] uppercase font-black">Last Hb</p><p class="text-lg font-black text-[#2c1d30]">{hemoglobin}</p></div>
+        </div>
+      </div>
+
+      <!-- Urdu Advice -->
+      <div class="card-lift backdrop-blur-xl bg-[#fcf8f2]/90 border border-amber-100 shadow-xl rounded-[32px] p-6 flex flex-col justify-between relative overflow-hidden">
+        <div class="absolute top-[-20px] right-[-20px] w-24 h-24 bg-amber-400/10 rounded-full blur-xl pointer-events-none"></div>
+        <div>
+          <div class="flex items-center justify-between mb-3 border-b border-amber-100 pb-3">
+            <span class="text-[8px] font-black text-amber-700 uppercase tracking-widest">حکمتِ صحت · Clinical Guidance</span>
+            <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[7px] font-black uppercase">Gemma AI · Urdu</span>
+          </div>
+          <p class="text-base font-semibold text-amber-950 leading-loose text-right pr-1" style="direction:rtl;font-family:'Inter',sans-serif;">{adviceUrdu}</p>
+        </div>
+        <div class="border-t border-amber-100 pt-3 mt-4 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <p class="text-[9px] text-amber-800 font-bold">{medications}</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- SOS MODAL -->
+<div id="sos-modal" class="hidden fixed inset-0 z-[100] items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+  <div class="w-full max-w-md bg-white border border-rose-100 rounded-[28px] p-6 shadow-2xl">
+    <div class="flex items-center gap-3 mb-5">
+      <div class="w-10 h-10 rounded-2xl bg-rose-500 flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+      </div>
+      <div>
+        <h3 class="text-base font-black text-[#2c1d30]">Emergency Rescue Alert</h3>
+        <p class="text-[9px] text-rose-500 font-bold uppercase tracking-widest">Notifies your LHW immediately</p>
+      </div>
+    </div>
+    <textarea id="sos-msg" rows="3" placeholder="Describe your emergency (e.g. severe headache, bleeding, difficulty breathing)..." class="w-full bg-rose-50 border border-rose-100 rounded-2xl px-4 py-3 text-[#2c1d30] text-xs font-medium placeholder-[#9d8aaa] focus:outline-none focus:ring-2 focus:ring-rose-400 resize-none mb-4"></textarea>
+    <div class="flex gap-3">
+      <button id="sos-send" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white font-black text-xs uppercase tracking-widest rounded-xl cursor-pointer transition-all active:scale-95">🚨 Send Emergency Alert</button>
+      <button id="sos-cancel" class="px-5 py-3 bg-[#2c1d30]/5 hover:bg-[#2c1d30]/10 text-[#765e82] font-bold text-xs rounded-xl cursor-pointer transition-all">Cancel</button>
+    </div>
+    <div id="sos-ok" class="hidden mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-xs font-bold text-center">
+      ✅ Alert sent to {patient.lhw.name} · {patient.lhw.mobile}
+    </div>
+  </div>
+</div>
+
+<!-- FLOATING CHAT -->
+<div class="fixed bottom-6 right-6 z-50">
+  <button id="chat-toggle" class="w-14 h-14 rounded-full bg-[#1c1421] text-white flex items-center justify-center shadow-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all border border-white/20">
+    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+  </button>
+  <div id="chat-win" class="hidden absolute bottom-16 right-0 w-[340px] h-[460px] rounded-[28px] bg-white border border-white/80 shadow-2xl flex-col overflow-hidden">
+    <div class="bg-[#1c1421] px-5 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><div><h4 class="text-xs font-black text-white uppercase tracking-widest">Gemma Maternal AI</h4><p class="text-[7px] text-[#fca27e] font-bold mt-0.5">Urdu &amp; English Health Assistant</p></div></div>
+      <button id="chat-close" class="text-white/40 hover:text-white cursor-pointer"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg></button>
+    </div>
+    <div id="chat-msgs" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs bg-[#f8f3ee]">
+      <div class="flex items-start gap-2"><div class="w-6 h-6 rounded-full bg-[#1c1421] text-[#fca27e] flex items-center justify-center font-black text-[8px] shrink-0">G</div><div class="p-3 bg-white rounded-[16px] rounded-tl-none border border-white/60 text-[#2c1d30] max-w-[85%] leading-relaxed shadow-sm">السلام علیکم {patient.name}! میں جیمّا زچہ وبچہ ہیلتھ اسسٹنٹ ہوں۔ کیا آپ کو کوئی تکلیف ہے؟</div></div>
+    </div>
+    <form id="chat-form" class="p-3 border-t border-[#2c1d30]/5 bg-white flex gap-2">
+      <input type="text" id="chat-in" required placeholder="Type your question..." class="flex-1 px-3 py-2.5 bg-[#f8f3ee] border border-[#2c1d30]/10 rounded-xl text-xs text-[#2c1d30] placeholder-[#9d8aaa] focus:outline-none focus:ring-1 focus:ring-[#1c1421]"/>
+      <button type="submit" class="px-4 bg-[#1c1421] text-white rounded-xl cursor-pointer font-black text-xs active:scale-95 transition-all">→</button>
+    </form>
+  </div>
+</div>
+
+<script is:inline>
+  const ct=document.getElementById('chat-toggle'),cc=document.getElementById('chat-close'),cw=document.getElementById('chat-win'),cf=document.getElementById('chat-form'),ci=document.getElementById('chat-in'),cm=document.getElementById('chat-msgs');
+  ct.addEventListener('click',()=>{cw.classList.toggle('hidden');cw.classList.toggle('flex');ci.focus();});
+  cc.addEventListener('click',()=>{cw.classList.add('hidden');cw.classList.remove('flex');});
+  cf.addEventListener('submit',async(e)=>{e.preventDefault();const m=ci.value.trim();if(!m)return;ab('u',m);ci.value='';const t=at();try{const r=await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();rt(t);ab('g',r.ok&&d.reply?d.reply:'معذرت، عارضی مسئلہ ہے۔ اپنی LHW سے رابطہ کریں۔');}catch{rt(t);ab('g','رابطہ قائم نہیں ہو سکا۔');}});
+  function ab(s,t){const d=document.createElement('div');d.className='flex items-start gap-2'+(s==='u'?' justify-end':'');d.innerHTML=s==='u'?`<div class="p-3 bg-[#1c1421] text-white rounded-[16px] rounded-tr-none max-w-[85%] leading-relaxed">${t}</div>`:`<div class="w-6 h-6 rounded-full bg-[#1c1421] text-[#fca27e] flex items-center justify-center font-black text-[8px] shrink-0">G</div><div class="p-3 bg-white rounded-[16px] rounded-tl-none border border-white/60 text-[#2c1d30] max-w-[85%] leading-relaxed shadow-sm">${t}</div>`;cm.appendChild(d);cm.scrollTop=cm.scrollHeight;}
+  function at(){const id='t'+Date.now(),d=document.createElement('div');d.id=id;d.className='flex items-start gap-2';d.innerHTML=`<div class="w-6 h-6 rounded-full bg-[#1c1421] text-[#fca27e] flex items-center justify-center font-black text-[8px] shrink-0">G</div><div class="p-3 bg-white rounded-[16px] rounded-tl-none border border-white/60 flex gap-1"><span class="w-1.5 h-1.5 rounded-full bg-[#9d8aaa] animate-bounce" style="animation-delay:0ms"></span><span class="w-1.5 h-1.5 rounded-full bg-[#9d8aaa] animate-bounce" style="animation-delay:150ms"></span><span class="w-1.5 h-1.5 rounded-full bg-[#9d8aaa] animate-bounce" style="animation-delay:300ms"></span></div>`;cm.appendChild(d);cm.scrollTop=cm.scrollHeight;return id;}
+  function rt(id){const e=document.getElementById(id);if(e)e.remove();}
+  const so=document.getElementById('sos-open'),sm=document.getElementById('sos-modal'),sc=document.getElementById('sos-cancel'),ss=document.getElementById('sos-send'),sok=document.getElementById('sos-ok');
+  so.addEventListener('click',()=>{sm.classList.remove('hidden');sm.classList.add('flex');});
+  sc.addEventListener('click',()=>{sm.classList.add('hidden');sm.classList.remove('flex');});
+  ss.addEventListener('click',()=>{ss.disabled=true;ss.textContent='Sending...';setTimeout(()=>{sok.classList.remove('hidden');ss.textContent='✅ Sent';},1200);});
+</script>
+
+</Layout>

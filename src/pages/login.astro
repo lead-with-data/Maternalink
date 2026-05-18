@@ -1,0 +1,322 @@
+---
+import '../styles/global.css';
+import { db } from '../lib/db';
+import { hashPassword } from '../lib/hash';
+import { createSession, verifySession } from '../lib/session';
+
+let errorMessage = '';
+const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
+const existingUser = sessionCookie ? verifySession(sessionCookie) : null;
+
+// If user is already logged in, redirect to correct dashboard
+if (existingUser) {
+  if (existingUser.role === 'ADMIN') return Astro.redirect('/admin/dashboard');
+  if (existingUser.role === 'NURSE') return Astro.redirect('/nurse/dashboard');
+  if (existingUser.role === 'LHW') return Astro.redirect('/lhw/dashboard');
+  if (existingUser.role === 'PATIENT') return Astro.redirect('/patient/dashboard');
+}
+
+if (Astro.request.method === 'POST') {
+  try {
+    const formData = await Astro.request.formData();
+    const mobile = formData.get('mobile')?.toString().trim() || '';
+    const password = formData.get('password')?.toString() || '';
+
+    if (!mobile || !password) {
+      errorMessage = 'Please enter both mobile number and security key.';
+    } else {
+      const user = await db.user.findUnique({
+        where: { mobile },
+        include: { healthFacility: true }
+      });
+
+      if (user && user.password === hashPassword(password)) {
+        // Successful staff login
+        const sessionToken = createSession({
+          id: user.id,
+          name: user.name,
+          email: user.mobile, // use mobile as identifier
+          role: user.role,
+          districtId: user.healthFacility?.districtId ? String(user.healthFacility.districtId) : null,
+          facilityId: user.healthFacilityId ? String(user.healthFacilityId) : null,
+        });
+
+        // Set cookie
+        Astro.cookies.set('maternalink_session', sessionToken, {
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          maxAge: 7 * 24 * 60 * 60, // 7 days
+          sameSite: 'lax',
+        });
+
+        // Redirect based on role
+        if (user.role === 'ADMIN') return Astro.redirect('/admin/dashboard');
+        if (user.role === 'NURSE') return Astro.redirect('/nurse/dashboard');
+        if (user.role === 'LHW') return Astro.redirect('/lhw/dashboard');
+      } else {
+        // Try patient authentication (CNIC and Mobile clean string match)
+        const cleanMobile = mobile.replace(/[^0-9]/g, '').replace(/^0/, '');
+        const cleanCnic = password.replace(/[^0-9]/g, '');
+
+        if (cleanMobile && cleanCnic) {
+          const allPatients = await db.patient.findMany({
+            include: { healthFacility: true }
+          });
+
+          const matchedPatient = allPatients.find(p => {
+            const pMobile = (p.mobile || '').replace(/[^0-9]/g, '').replace(/^0/, '');
+            const pCnic = (p.cnic || '').replace(/[^0-9]/g, '');
+            return pMobile.endsWith(cleanMobile) && pCnic === cleanCnic;
+          });
+
+          if (matchedPatient) {
+            // Successful patient login
+            const sessionToken = createSession({
+              id: matchedPatient.id,
+              name: matchedPatient.name,
+              email: matchedPatient.mobile || '',
+              role: 'PATIENT',
+              districtId: matchedPatient.healthFacility?.districtId ? String(matchedPatient.healthFacility.districtId) : null,
+              facilityId: String(matchedPatient.healthFacilityId),
+            });
+
+            // Set cookie
+            Astro.cookies.set('maternalink_session', sessionToken, {
+              path: '/',
+              httpOnly: true,
+              secure: process.env.NODE_ENV === 'production',
+              maxAge: 7 * 24 * 60 * 60, // 7 days
+              sameSite: 'lax',
+            });
+
+            return Astro.redirect('/patient/dashboard');
+          }
+        }
+        errorMessage = 'Invalid mobile number or security key/CNIC.';
+      }
+    }
+  } catch (err) {
+    console.error("Login submission error:", err);
+    errorMessage = 'An error occurred during login. Please try again.';
+  }
+}
+---
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In | Maternalink Cloud Obstetric Portal</title>
+  
+  <!-- Outfit and Inter Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@100;200;300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <style>
+    /* Clean, serene light design override */
+    html, body {
+      background-color: #fffbf9 !important;
+      color: #2c1d30 !important;
+      height: 100% !important;
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      overflow-x: hidden;
+    }
+    h1, h2, h3, .font-display {
+      font-family: 'Outfit', sans-serif;
+    }
+    .form-panel {
+      background-color: #fffbf9;
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      backdrop-filter: blur(25px) saturate(110%);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex items-stretch w-full">
+
+  <!-- Left Column: Highly Polished Light-Theme Login Console (50% split) -->
+  <div class="flex-1 flex flex-col justify-center px-6 sm:px-12 lg:px-20 py-12 form-panel relative z-10">
+    
+    <!-- Delicate ambient peach light inside form panel -->
+    <div class="absolute top-0 left-0 w-80 h-80 rounded-full bg-[#ffd9cc]/20 blur-[100px] pointer-events-none -z-10"></div>
+    <div class="absolute bottom-0 right-0 w-80 h-80 rounded-full bg-[#eadaf5]/20 blur-[100px] pointer-events-none -z-10"></div>
+
+    <div class="mx-auto w-full max-w-md">
+      
+      <!-- Brand Logo & Header -->
+      <div class="mb-10 text-left">
+        <a href="/" class="inline-flex items-center gap-2 group">
+          <div class="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-[#fca27e] to-[#ebdcd5] shadow-sm animate-pulse"></div>
+          <span class="text-sm font-black tracking-widest text-[#2c1d30] uppercase font-display">Maternalink</span>
+        </a>
+        <h2 class="text-3xl font-light tracking-tight text-[#1e1322] font-display mt-6">
+          Access Obstetric Portal
+        </h2>
+        <p class="text-xs text-[#765e82] font-medium mt-2">
+          Authenticate credentials to enter the de-identified AI telemetry command network.
+        </p>
+      </div>
+
+      <!-- Error Message Banner -->
+      {errorMessage && (
+        <div class="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-100 text-rose-800 text-xs flex items-center gap-3 animate-fade-in shadow-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+          <span class="font-medium">{errorMessage}</span>
+        </div>
+      )}
+
+      <!-- Form -->
+      <form method="POST" class="space-y-6">
+        <!-- Mobile Input -->
+        <div>
+          <label for="mobile" class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-2 font-display">Mobile Number</label>
+          <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#9882a1]">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.94.725l.548 2.2a1 1 0 01-.321.988l-1.305.98a10.582 10.582 0 004.872 4.872l.98-1.305a1 1 0 01.988-.321l2.2.548a1 1 0 01.725.94V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+              </svg>
+            </div>
+            <input 
+              type="text" 
+              id="mobile" 
+              name="mobile" 
+              required 
+              placeholder="e.g. 03003333333" 
+              class="block w-full pl-11 pr-4 py-3.5 bg-white border border-[#2c2230]/10 focus:border-[#765e82] rounded-2xl text-[#2c1d30] placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-[#765e82] text-sm font-medium shadow-sm transition-all duration-300"
+            />
+          </div>
+        </div>
+
+        <!-- Security Key Input -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label for="password" class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest font-display">Security Key</label>
+            <span class="text-[9px] font-bold text-[#ac8dd9] uppercase tracking-widest">Encrypted SSL</span>
+          </div>
+          <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#9882a1]">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <input 
+              type="password" 
+              id="password" 
+              name="password" 
+              required 
+              placeholder="••••••••" 
+              class="block w-full pl-11 pr-4 py-3.5 bg-white border border-[#2c2230]/10 focus:border-[#765e82] rounded-2xl text-[#2c1d30] placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-[#765e82] text-sm font-medium shadow-sm transition-all duration-300"
+            />
+          </div>
+        </div>
+
+        <!-- Submit Button -->
+        <button 
+          type="submit" 
+          class="w-full mt-4 py-3.5 bg-[#1c1421] hover:bg-[#2c2033] text-white font-extrabold text-[10px] tracking-widest uppercase rounded-2xl shadow-md transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+        >
+          Authenticate & Enter
+        </button>
+      </form>
+
+      <!-- Preset Divider -->
+      <div class="my-8 flex items-center justify-between text-[9px] text-slate-400 font-bold tracking-widest">
+        <span class="w-1/5 border-b border-[#2c2230]/5"></span>
+        <span>DEMO WORKSPACE PRESETS</span>
+        <span class="w-1/5 border-b border-[#2c2230]/5"></span>
+      </div>
+
+      <!-- Presets Pill Buttons Grid -->
+      <div class="grid grid-cols-4 gap-2 text-center text-[8px] tracking-widest font-extrabold">
+        <button 
+          type="button" 
+          onclick="setPreset('03001111111')" 
+          class="py-2.5 px-0.5 rounded-full bg-white border border-[#2c2230]/10 hover:border-rose-300 text-[#765e82] hover:bg-rose-50/20 transition-all cursor-pointer shadow-sm active:scale-[0.97]"
+        >
+          ADMIN
+        </button>
+        <button 
+          type="button" 
+          onclick="setPreset('03002222222')" 
+          class="py-2.5 px-0.5 rounded-full bg-white border border-[#2c2230]/10 hover:border-amber-300 text-[#765e82] hover:bg-amber-50/20 transition-all cursor-pointer shadow-sm active:scale-[0.97]"
+        >
+          NURSE
+        </button>
+        <button 
+          type="button" 
+          onclick="setPreset('03003333333')" 
+          class="py-2.5 px-0.5 rounded-full bg-white border border-[#2c2230]/10 hover:border-emerald-300 text-[#765e82] hover:bg-emerald-50/20 transition-all cursor-pointer shadow-sm active:scale-[0.97]"
+        >
+          LHW
+        </button>
+        <button 
+          type="button" 
+          onclick="setPatientPreset('03001234567', '44301-1234567-8')" 
+          class="py-2.5 px-0.5 rounded-full bg-white border border-[#2c2230]/10 hover:border-amber-500 text-[#765e82] hover:bg-amber-50/20 transition-all cursor-pointer shadow-sm active:scale-[0.97]"
+        >
+          PATIENT
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Right Column: Full-height Breathtaking Mother & Valley Image (Supermi styled Split Screen) -->
+  <div class="hidden md:block flex-1 relative overflow-hidden">
+    <!-- Serene Mother Image -->
+    <img 
+      src="/login-signup.png" 
+      alt="Serene expectant mother sitting in a wild flower meadow looking over a scenic misty valley" 
+      class="absolute inset-0 w-full h-full object-cover object-left z-0"
+    />
+    <!-- Shadow gradient overlay to ground the card -->
+    <div class="absolute inset-0 bg-gradient-to-t from-[#1c1421]/60 via-transparent to-[#1c1421]/20 z-10"></div>
+
+    <!-- Breathtaking Frosted Glass Card layered over the image -->
+    <div class="absolute bottom-0 left-0 right-0 z-20 p-8 flex justify-center">
+      <div class="glass-card max-w-lg rounded-3xl p-8 text-white text-left relative overflow-hidden">
+        
+        <!-- Subtle soft peach glow behind text inside card -->
+        <div class="absolute top-[-50%] left-[-50%] w-[150%] h-[150%] rounded-full bg-gradient-to-br from-[#ffd9cc]/20 to-transparent blur-xl pointer-events-none -z-10"></div>
+
+        <div class="flex items-center gap-2 mb-3">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5 text-[#fca27e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+          </svg>
+          <span class="text-[9px] font-black uppercase tracking-widest text-[#fca27e] font-display">Maternal care inspired by safety</span>
+        </div>
+        
+        <h3 class="text-2xl font-light tracking-tight text-white font-display mb-3">
+          Safe Motherhood, <span class="font-normal">Connected Care.</span>
+        </h3>
+        
+        <p class="text-xs text-slate-200 leading-relaxed">
+          Bridging frontline community workers directly with facility nurses and district headquarters. Elevate patient outcomes with secure, de-identified risk models powered by Gemma AI.
+        </p>
+
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    function setPreset(mobile) {
+      document.getElementById('mobile').value = mobile;
+      document.getElementById('password').value = 'Maternalink123$';
+    }
+    function setPatientPreset(mobile, cnic) {
+      document.getElementById('mobile').value = mobile;
+      document.getElementById('password').value = cnic;
+    }
+  </script>
+
+</body>
+</html>

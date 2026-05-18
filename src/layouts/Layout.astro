@@ -1,0 +1,28 @@
+---
+import '../styles/global.css';
+interface Props {
+	title?: string;
+}
+const { title = "Maternalink | Cloud AI Obstetric Platform" } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="generator" content={Astro.generator} />
+		
+		<!-- SEO Optimization -->
+		<title>{title}</title>
+		<meta name="description" content="Maternalink is an AI-powered cloud platform providing intelligent obstetric decision-support, real-time risk assessment, and secure role-based maternal referral pipelines in Tharparkar, Sindh." />
+		
+		<!-- Preconnect to Google Fonts for extreme speed -->
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	</head>
+	<body>
+		<slot />
+	</body>
+</html>

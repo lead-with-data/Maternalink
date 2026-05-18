@@ -1,0 +1,456 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { db } from '../../lib/db';
+import { verifySession } from '../../lib/session';
+import { hashPassword } from '../../lib/hash';
+import { Role, Severity } from '@prisma/client';
+
+const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
+const user = sessionCookie ? verifySession(sessionCookie) : null;
+
+// Secure page: strictly ADMIN
+if (!user || user.role !== 'ADMIN') {
+  return Astro.redirect('/login');
+}
+
+let successMessage = '';
+let errorMessage = '';
+
+// Fetch all health facilities for dropdown
+const facilities = await db.healthFacility.findMany();
+
+// Handle post actions
+if (Astro.request.method === 'POST') {
+  try {
+    const formData = await Astro.request.formData();
+    const action = formData.get('action')?.toString();
+
+    if (action === 'create-worker') {
+      const name = formData.get('name')?.toString().trim() || '';
+      const mobile = formData.get('mobile')?.toString().trim() || '';
+      const cnic = formData.get('cnic')?.toString().trim() || '';
+      const roleStr = formData.get('role')?.toString() || '';
+      const facilityIdStr = formData.get('facilityId')?.toString() || '';
+
+      if (!name || !mobile || !cnic || !roleStr) {
+        errorMessage = 'Name, Mobile, CNIC, and Role are required.';
+      } else {
+        const hashedPassword = hashPassword("Maternalink123$");
+        
+        let workerRole = Role.LHW;
+        if (roleStr === 'NURSE') workerRole = Role.NURSE;
+        if (roleStr === 'ADMIN') workerRole = Role.ADMIN;
+
+        await db.user.create({
+          data: {
+            name,
+            mobile,
+            cnic,
+            password: hashedPassword,
+            role: workerRole,
+            healthFacilityId: facilityIdStr ? parseInt(facilityIdStr) : null
+          }
+        });
+
+        // Audit log
+        await db.auditLog.create({
+          data: {
+            userId: user.id,
+            action: 'CREATE_WORKER',
+            details: `Admin created ${workerRole} account for ${name} (Mobile: ${mobile}).`
+          }
+        });
+
+        successMessage = `Successfully created ${workerRole} account for ${name}. Temporary password: Maternalink123$`;
+      }
+    } else if (action === 'dispatch') {
+      const alertId = formData.get('alertId')?.toString() || '';
+      const dispatchNotes = formData.get('notes')?.toString().trim() || '';
+
+      if (!alertId) {
+        errorMessage = 'Invalid Alert identification.';
+      } else {
+        // Fetch current alert to append message
+        const currentAlert = await db.alert.findUnique({ where: { id: alertId } });
+        if (currentAlert) {
+          await db.alert.update({
+            where: { id: alertId },
+            data: {
+              isDispatched: true,
+              dispatchedAt: new Date(),
+              message: `${currentAlert.message} | [ADMIN ACTION RELEASED: ${dispatchNotes || 'Obstetric Support & Ambulance Dispatched'}]`
+            }
+          });
+
+          // Audit log
+          await db.auditLog.create({
+            data: {
+              userId: user.id,
+              action: 'RELEASE_DISPATCH',
+              details: `Released emergency dispatch for Alert ${alertId}. Notes: ${dispatchNotes}.`
+            }
+          });
+
+          successMessage = `Emergency dispatch released! Ambulance and clinical support routed.`;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Admin dashboard POST error:", err);
+    errorMessage = 'Failed to execute database transaction.';
+  }
+}
+
+// Fetch Stats for Overview
+const totalMothers = await db.patient.count();
+const totalVisits = await db.visit.count();
+const activeAlerts = await db.alert.findMany({
+  where: { resolved: false },
+  include: {
+    visit: {
+      include: {
+        pregnancy: {
+          include: {
+            patient: true
+          }
+        }
+      }
+    }
+  },
+  orderBy: { severity: 'desc' }
+});
+
+const criticalAlertsCount = activeAlerts.filter(a => a.severity === Severity.CRITICAL).length;
+const highAlertsCount = activeAlerts.filter(a => a.severity === Severity.HIGH).length;
+
+// Fetch Workers
+const workers = await db.user.findMany({
+  include: { healthFacility: true },
+  orderBy: { createdAt: 'desc' }
+});
+
+// Fetch Audit Logs
+const logs = await db.auditLog.findMany({
+  include: { user: true },
+  orderBy: { timestamp: 'desc' },
+  take: 15
+});
+---
+
+
+<Layout title="Admin Command Center | Maternalink">
+<style is:global>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&display=swap');
+body{font-family:'Outfit',sans-serif;}
+.kpi-card{background:rgba(255,255,255,0.85);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.7);border-radius:28px;padding:1.5rem;box-shadow:0 8px 32px rgba(44,29,48,.08);transition:transform .2s,box-shadow .2s;}
+.kpi-card:hover{transform:translateY(-3px);box-shadow:0 20px 48px rgba(44,29,48,.13);}
+.panel{background:rgba(255,255,255,0.85);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.7);border-radius:28px;padding:1.75rem;box-shadow:0 8px 32px rgba(44,29,48,.07);}
+</style>
+
+<div class="min-h-screen flex flex-col font-sans relative overflow-x-hidden" style="background-image:linear-gradient(to bottom,rgba(28,20,33,.45),rgba(28,20,33,.75)),url('/login-signup.png');background-size:cover;background-position:center;background-attachment:fixed;">
+
+  <!-- NAVBAR -->
+  <header class="sticky top-4 z-40 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="bg-[#1c1421]/92 backdrop-blur-xl border border-white/10 rounded-[24px] px-6 py-4 flex items-center justify-between shadow-xl">
+      <div class="flex items-center gap-3">
+        <div class="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-[#fca27e] to-[#f472b6] animate-pulse"></div>
+        <div>
+          <h1 class="text-sm font-black text-white uppercase tracking-widest leading-none">Maternalink</h1>
+          <p class="text-[9px] text-[#fca27e] font-black tracking-widest uppercase mt-0.5">Admin · District Command HQ</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-500/15 border border-emerald-400/20 rounded-full">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="text-[9px] font-black text-emerald-400 uppercase tracking-widest">System Live</span>
+        </div>
+        <div class="text-right hidden sm:block">
+          <p class="text-xs font-bold text-white">{user.name}</p>
+          <p class="text-[9px] text-white/40 font-mono tracking-wider">DHO Admin</p>
+        </div>
+        <a href="/logout" class="py-1.5 px-4 bg-white/10 hover:bg-rose-500/20 border border-white/15 text-white/70 hover:text-white text-[9px] font-bold uppercase tracking-widest rounded-full transition-all">Sign Out</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 z-10 space-y-7">
+
+    <!-- Alerts -->
+    {successMessage && (
+      <div class="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-3 shadow-sm font-bold">
+        <svg class="h-5 w-5 shrink-0 text-emerald-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+        {successMessage}
+      </div>
+    )}
+    {errorMessage && (
+      <div class="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-3 shadow-sm font-bold">
+        <svg class="h-5 w-5 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+        {errorMessage}
+      </div>
+    )}
+
+    <!-- HEADER -->
+    <div>
+      <div class="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-[#fca27e] mb-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Live System Status / DHO Control Hub
+      </div>
+      <h2 class="text-3xl font-extrabold text-white tracking-tight">Obstetric Command <span class="font-light text-[#fca27e]">Dashboard</span></h2>
+    </div>
+
+    <!-- KPI ROW -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-5">
+      <div class="kpi-card flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <span class="text-[8px] font-black text-[#5c4a63] uppercase tracking-widest">Registered Mothers</span>
+          <div class="w-8 h-8 rounded-xl bg-purple-100 flex items-center justify-center">
+            <svg class="w-4 h-4 text-[#9b6fa0]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          </div>
+        </div>
+        <p class="text-4xl font-black text-[#3b2f42] leading-none">{totalMothers}</p>
+        <p class="text-[9px] text-[#9b6fa0] font-bold">Active cohort</p>
+      </div>
+
+      <div class="kpi-card flex flex-col gap-3 border-l-4 border-l-red-400">
+        <div class="flex items-center justify-between">
+          <span class="text-[8px] font-black text-rose-600 uppercase tracking-widest">Critical Alerts</span>
+          <div class="w-8 h-8 rounded-xl bg-rose-100 flex items-center justify-center">
+            <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+          </div>
+        </div>
+        <p class="text-4xl font-black text-rose-600 leading-none">{criticalAlertsCount}</p>
+        <p class="text-[9px] text-[#9b6fa0] font-bold">Active red alerts</p>
+      </div>
+
+      <div class="kpi-card flex flex-col gap-3 border-l-4 border-l-amber-400">
+        <div class="flex items-center justify-between">
+          <span class="text-[8px] font-black text-amber-700 uppercase tracking-widest">High Risk</span>
+          <div class="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center">
+            <svg class="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          </div>
+        </div>
+        <p class="text-4xl font-black text-amber-700 leading-none">{highAlertsCount}</p>
+        <p class="text-[9px] text-[#9b6fa0] font-bold">High severity</p>
+      </div>
+
+      <div class="kpi-card flex flex-col gap-3 border-l-4 border-l-[#c47c3a]">
+        <div class="flex items-center justify-between">
+          <span class="text-[8px] font-black text-[#c47c3a] uppercase tracking-widest">Clinical Visits</span>
+          <div class="w-8 h-8 rounded-xl bg-orange-100 flex items-center justify-center">
+            <svg class="w-4 h-4 text-[#c47c3a]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          </div>
+        </div>
+        <p class="text-4xl font-black text-[#3b2f42] leading-none">{totalVisits}</p>
+        <p class="text-[9px] text-[#9b6fa0] font-bold">Biometric logs</p>
+      </div>
+
+      <div class="kpi-card flex flex-col gap-3 border-l-4 border-l-emerald-500">
+        <div class="flex items-center justify-between">
+          <span class="text-[8px] font-black text-emerald-700 uppercase tracking-widest">Dispatched</span>
+          <div class="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <svg class="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+        </div>
+        <p class="text-4xl font-black text-emerald-700 leading-none">{activeAlerts.filter(a=>a.isDispatched).length}</p>
+        <p class="text-[9px] text-[#9b6fa0] font-bold">Ambulances sent</p>
+      </div>
+    </div>
+    <!-- TWO-COLUMN MAIN WORKSPACE -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- LEFT COLUMN: Worker Management & Registration (2 cols wide) -->
+      <div class="lg:col-span-2 panel space-y-6">
+        <h3 class="text-sm font-black text-[#3b2f42] flex items-center gap-2">
+          <span class="w-1 h-5 bg-[#9b6fa0] rounded-full"></span>Register &amp; Manage Health Workers
+        </h3>
+
+        <form method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5 bg-[#f7f0f9]/60 border border-[#9b6fa0]/10 rounded-2xl">
+          <input type="hidden" name="action" value="create-worker"/>
+          <div>
+            <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">Full Name</label>
+            <input type="text" name="name" required placeholder="e.g. Maryam Fatima" class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] placeholder-[#9b6fa0]/40 focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all"/>
+          </div>
+          <div>
+            <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">Mobile Number</label>
+            <input type="text" name="mobile" required placeholder="03009999999" class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] placeholder-[#9b6fa0]/40 focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all"/>
+          </div>
+          <div>
+            <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">CNIC</label>
+            <input type="text" name="cnic" required placeholder="44301-9999999-9" class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] placeholder-[#9b6fa0]/40 focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all"/>
+          </div>
+          <div>
+            <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">System Role</label>
+            <select name="role" required class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all">
+              <option value="LHW">Lady Health Worker (LHW)</option>
+              <option value="NURSE">Facility Nurse</option>
+              <option value="ADMIN">Sub-Administrator</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-[9px] font-black text-[#5c4a63] uppercase tracking-widest mb-1.5">Assigned Health Facility</label>
+            <select name="facilityId" class="w-full py-2.5 px-4 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] focus:outline-none focus:ring-1 focus:ring-[#9b6fa0]/20 transition-all">
+              <option value="">-- None (District HQ) --</option>
+              {facilities.map(f=>(<option value={f.id}>{f.name}</option>))}
+            </select>
+          </div>
+          <button type="submit" class="sm:col-span-2 py-3 bg-[#3b2f42] hover:bg-[#52415c] text-white font-black text-[10px] tracking-widest uppercase rounded-xl transition-all cursor-pointer shadow-lg">
+            ✦ Register Staff Profile &amp; Generate Credentials
+          </button>
+        </form>
+
+        <!-- Workers Table -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="text-[8px] font-black uppercase tracking-widest text-[#9b6fa0] border-b border-[#3b2f42]/8">
+                <th class="py-3 px-3">Name</th>
+                <th class="py-3 px-3">Role</th>
+                <th class="py-3 px-3">Mobile</th>
+                <th class="py-3 px-3">Facility</th>
+                <th class="py-3 px-3">CNIC</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#3b2f42]/6">
+              {workers.map(w=>(
+                <tr class="hover:bg-white/50 transition-colors group">
+                  <td class="py-3 px-3">
+                    <div class="flex items-center gap-2.5">
+                      <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-[#9b6fa0] to-[#c47c3a] flex items-center justify-center text-white font-black text-[9px] shrink-0">
+                        {w.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2)}
+                      </div>
+                      <span class="font-black text-[#3b2f42]">{w.name}</span>
+                    </div>
+                  </td>
+                  <td class="py-3 px-3">
+                    <span class={`text-[7px] font-black px-2 py-0.5 rounded-full border uppercase tracking-widest ${w.role==='ADMIN'?'bg-purple-100 text-purple-700 border-purple-200':w.role==='NURSE'?'bg-amber-100 text-amber-700 border-amber-200':'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>{w.role}</span>
+                  </td>
+                  <td class="py-3 px-3 font-bold text-[#5c4a63]">{w.mobile}</td>
+                  <td class="py-3 px-3 font-bold text-[#5c4a63]">{w.healthFacility?.name||'District Admin'}</td>
+                  <td class="py-3 px-3 font-mono text-[#5c4a63] text-[10px]">{w.cnic}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: Emergency Control Center & Audit Log Activity (1 col wide) -->
+      <div class="lg:col-span-1 space-y-6">
+
+        <!-- Emergency Control Center -->
+        <div class="panel flex flex-col">
+          <div class="flex items-center justify-between mb-5 pb-4 border-b border-[#3b2f42]/8">
+            <h3 class="text-sm font-black text-[#3b2f42] flex items-center gap-2">
+              <span class="w-1 h-5 bg-rose-500 rounded-full"></span>Emergency Control
+            </h3>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-full">
+              <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+              <span class="text-[7px] font-black text-rose-600 uppercase tracking-widest">{activeAlerts.length} Active</span>
+            </div>
+          </div>
+          {activeAlerts.length===0?(
+            <div class="flex items-center justify-center text-center py-12">
+              <div>
+                <svg class="w-10 h-10 text-emerald-500 mx-auto mb-2 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <p class="text-xs font-bold text-[#9b6fa0] uppercase tracking-wider">All Clear — No Active Crises</p>
+              </div>
+            </div>
+          ):(
+            <div class="grid grid-cols-1 gap-4">
+              {activeAlerts.map(alert=>{
+                const visit=alert.visit; const preg=visit.pregnancy; const patient=preg.patient;
+                return (
+                  <div class={`rounded-2xl p-4 border-l-4 transition-all hover:scale-[1.01] ${alert.severity==='CRITICAL'?'bg-rose-50/80 border-l-rose-500 border border-rose-100 shadow-md':'bg-orange-50/80 border-l-orange-400 border border-orange-100 shadow-md'}`}>
+                    <div class="flex items-start justify-between gap-2 mb-3">
+                      <div>
+                        <p class="text-[8px] text-[#5c4a63] font-bold uppercase tracking-widest mb-0.5">Case Target</p>
+                        <p class="text-sm font-black text-[#3b2f42]">{patient.name}</p>
+                        <p class="text-[10px] text-[#5c4a63]">{patient.age}y · {patient.address}</p>
+                      </div>
+                      <span class={`text-[8px] font-black px-2.5 py-0.5 rounded-full border shrink-0 ${alert.severity==='CRITICAL'?'bg-rose-100 text-rose-700 border-rose-200':'bg-orange-100 text-orange-700 border-orange-200'}`}>{alert.severity}</span>
+                    </div>
+                    <p class="text-[11px] text-[#5c4a63] leading-relaxed mb-4">{alert.message}</p>
+                    <div class="grid grid-cols-3 gap-2 text-[9px] text-center font-mono font-bold text-[#3b2f42] mb-4 bg-white/80 border border-[#3b2f42]/6 p-2 rounded-xl">
+                      <div><span class="text-[#9b6fa0]">BP</span><br/>{visit.systolicBP}/{visit.diastolicBP}</div>
+                      <div><span class="text-[#9b6fa0]">Weeks</span><br/>{visit.gestationalWeeks}</div>
+                      <div><span class="text-[#9b6fa0]">Risk</span><br/><span class="text-rose-600">{visit.riskScore}%</span></div>
+                    </div>
+                    {!alert.isDispatched?(
+                      <form method="POST" class="space-y-2">
+                        <input type="hidden" name="action" value="dispatch"/>
+                        <input type="hidden" name="alertId" value={alert.id}/>
+                        <input type="text" name="notes" required placeholder="Coordinates/routing notes..." class="w-full py-2 px-3 bg-white border border-[#3b2f42]/10 focus:border-[#9b6fa0] rounded-xl text-xs text-[#3b2f42] placeholder-[#5c4a63]/40 focus:outline-none transition-all"/>
+                        <button type="submit" class="w-full py-2 bg-[#3b2f42] hover:bg-[#52415c] text-white font-black text-[9px] tracking-widest uppercase rounded-xl cursor-pointer transition-all active:scale-[0.98]">🚑 Release Dispatch</button>
+                      </form>
+                    ):(
+                      <div class="flex items-center gap-1.5 text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl">
+                        <svg class="h-4 w-4 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Dispatched {alert.dispatchedAt?new Date(alert.dispatchedAt).toLocaleTimeString():'Active'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <!-- Platform Activity Audit Log -->
+        <div class="panel">
+          <h3 class="text-sm font-black text-[#3b2f42] flex items-center gap-2 mb-5">
+            <span class="w-1 h-5 bg-[#9b6fa0] rounded-full"></span>Platform Activity Audit
+          </h3>
+          <div class="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+            {logs.map(log=>(
+              <div class="relative pl-5 pb-3 border-l border-[#3b2f42]/10 last:border-0">
+                <div class="absolute -left-1 top-1.5 w-2 h-2 bg-[#9b6fa0]/30 border border-[#9b6fa0]/60 rounded-full"></div>
+                <div class="flex items-center justify-between text-[8px] text-[#9b6fa0] mb-0.5">
+                  <span class="font-black uppercase tracking-wide">{log.user.name} · {log.user.role}</span>
+                  <span class="font-mono">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <p class="text-xs font-black text-[#3b2f42]">{log.action}</p>
+                <p class="text-[10px] text-[#5c4a63] font-medium leading-relaxed mt-0.5">{log.details}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div> <!-- Closes Right Column lg:col-span-1 -->
+    </div> <!-- Closes Main Workspace grid -->
+
+  </main>
+</div>
+
+<!-- FLOATING CHAT -->
+<div class="fixed bottom-6 right-6 z-50">
+  <button id="chat-toggle" class="w-14 h-14 rounded-full bg-[#1c1421] text-white flex items-center justify-center shadow-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all border border-white/20">
+    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+  </button>
+  <div id="chat-win" class="hidden absolute bottom-16 right-0 w-[340px] h-[460px] rounded-[28px] bg-white border border-white/80 shadow-2xl flex-col overflow-hidden">
+    <div class="bg-[#1c1421] px-5 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><div><h4 class="text-xs font-black text-white uppercase tracking-widest">Gemma District AI</h4><p class="text-[7px] text-[#fca27e] font-bold mt-0.5">Command Center Assistant</p></div></div>
+      <button id="chat-close" class="text-white/40 hover:text-white cursor-pointer"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg></button>
+    </div>
+    <div id="chat-msgs" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs bg-[#f8f3ee]">
+      <div class="flex items-start gap-2"><div class="w-6 h-6 rounded-full bg-[#1c1421] text-[#fca27e] flex items-center justify-center font-black text-[8px] shrink-0">G</div><div class="p-3 bg-white rounded-[16px] rounded-tl-none border border-white/60 text-[#2c1d30] max-w-[85%] leading-relaxed shadow-sm">System secure, {user.name}. I am monitoring Tharparkar's maternal telemetry. How can I assist?</div></div>
+    </div>
+    <form id="chat-form" class="p-3 border-t border-[#2c1d30]/5 bg-white flex gap-2">
+      <input type="text" id="chat-in" required placeholder="Ask about trends, alerts..." class="flex-1 px-3 py-2.5 bg-[#f8f3ee] border border-[#2c1d30]/10 rounded-xl text-xs text-[#2c1d30] placeholder-[#9d8aaa] focus:outline-none focus:ring-1 focus:ring-[#1c1421]"/>
+      <button type="submit" class="px-4 bg-[#1c1421] text-white rounded-xl cursor-pointer font-black text-xs active:scale-95 transition-all">→</button>
+    </form>
+  </div>
+</div>
+
+<script is:inline>
+  const ct=document.getElementById('chat-toggle'),cc=document.getElementById('chat-close'),cw=document.getElementById('chat-win'),cf=document.getElementById('chat-form'),ci=document.getElementById('chat-in'),cm=document.getElementById('chat-msgs');
+  if(ct&&cc&&cw&&cf&&ci&&cm){
+    ct.addEventListener('click',()=>{cw.classList.toggle('hidden');cw.classList.toggle('flex');ci.focus();});
+    cc.addEventListener('click',()=>{cw.classList.add('hidden');cw.classList.remove('flex');});
+    cf.addEventListener('submit',async(e)=>{e.preventDefault();const m=ci.value.trim();if(!m)return;ab('u',m);ci.value='';const t=at();try{const r=await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m, context: 'admin'})});const d=await r.json();rt(t);ab('g',r.ok&&d.reply?d.reply:'Temporary network issue. Please check the logs.');}catch{rt(t);ab('g','Connection error.');}});
+    function ab(s,t){const d=document.createElement('div');d.className='flex items-start gap-2'+(s==='u'?' justify-end':'');d.innerHTML=s==='u'?`<div class="p-3 bg-[#1c1421] text-white rounded-[16px] rounded-tr-none max-w-[85%] leading-relaxed">${t}</div>`:`<div class="w-6 h-6 rounded-full bg-[#1c1421] text-[#fca27e] flex items-center justify-center font-black text-[8px] shrink-0">G</div><div class="p-3 bg-white rounded-[16px] rounded-tl-none border border-white/60 text-[#2c1d30] max-w-[85%] leading-relaxed shadow-sm">${t}</div>`;cm.appendChild(d);cm.scrollTop=cm.scrollHeight;}
+    function at(){const id='t'+Date.now(),d=document.createElement('div');d.id=id;d.className='flex items-start gap-2';d.innerHTML=`<div class="w-6 h-6 rounded-full bg-[#1c1421] text-[#fca27e] flex items-center justify-center font-black text-[8px] shrink-0">G</div><div class="p-3 bg-white rounded-[16px] rounded-tl-none border border-white/60 flex gap-1"><span class="w-1.5 h-1.5 rounded-full bg-[#9d8aaa] animate-bounce" style="animation-delay:0ms"></span><span class="w-1.5 h-1.5 rounded-full bg-[#9d8aaa] animate-bounce" style="animation-delay:150ms"></span><span class="w-1.5 h-1.5 rounded-full bg-[#9d8aaa] animate-bounce" style="animation-delay:300ms"></span></div>`;cm.appendChild(d);cm.scrollTop=cm.scrollHeight;return id;}
+    function rt(id){const e=document.getElementById(id);if(e)e.remove();}
+  }
+</script>
+
+
+
+</Layout>

@@ -1,0 +1,405 @@
+---
+import '../styles/global.css';
+import { verifySession } from '../lib/session';
+
+const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
+const user = sessionCookie ? verifySession(sessionCookie) : null;
+---
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Maternalink | Real-time Obstetric AI Telemetry & Command</title>
+  
+  <!-- Outfit and Inter Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@100;200;300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <style>
+    /* Absolute light override of global dark stylesheet for a completely serene light experience */
+    html {
+      background-color: #fffbf9 !important;
+      overflow-x: hidden !important;
+      width: 100% !important;
+      height: auto !important;
+    }
+    body {
+      background-color: #fffbf9 !important;
+      color: #2c1d30 !important;
+      overflow-x: hidden !important;
+      width: 100% !important;
+      height: auto !important;
+      font-family: 'Inter', sans-serif;
+    }
+    h1, h2, h3, .font-display {
+      font-family: 'Outfit', sans-serif;
+    }
+    .text-glow {
+      text-shadow: 0 4px 30px rgba(118, 94, 130, 0.04);
+    }
+    .floating-nav {
+      background: rgba(28, 20, 33, 0.98);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 15px 35px rgba(28, 20, 33, 0.15);
+    }
+    .dashboard-mockup {
+      background: rgba(255, 255, 255, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 30px 70px rgba(70, 50, 80, 0.05);
+      backdrop-filter: blur(30px);
+    }
+    .feature-card {
+      background: rgba(255, 255, 255, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 10px 30px rgba(70, 50, 80, 0.02);
+      backdrop-filter: blur(20px);
+      transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    .feature-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 15px 40px rgba(70, 50, 80, 0.04);
+      background: rgba(255, 255, 255, 0.85);
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-b from-[#fffbf9] via-[#fdf5f2] to-[#f4eef8] text-[#2c1d30] relative overflow-x-hidden font-sans antialiased pb-20 w-full">
+
+  <!-- Background Glows wrapped in absolute-overflow-hidden to guarantee 0px horizontal scroll / responsive break -->
+  <div class="absolute inset-0 overflow-hidden pointer-events-none z-0">
+    <div class="absolute top-[-10%] left-1/4 w-[60vw] h-[60vw] rounded-full bg-gradient-to-br from-[#ffd9cc]/30 to-transparent blur-[130px]"></div>
+    <div class="absolute top-[20%] right-[-10%] w-[65vw] h-[65vw] rounded-full bg-gradient-to-br from-[#ffd6db]/30 to-[#eadaf5]/30 blur-[140px]"></div>
+    <div class="absolute bottom-[-10%] left-[-10%] w-[55vw] h-[55vw] rounded-full bg-gradient-to-tr from-[#e3dcf0]/30 to-transparent blur-[130px]"></div>
+  </div>
+
+  <!-- Header Navigation Container -->
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 relative z-50">
+    <!-- Floating Dark Capsule Navbar (Supermi style) -->
+    <header class="max-w-3xl mx-auto floating-nav rounded-full py-2.5 px-4 sm:px-6 flex items-center justify-between z-50 relative">
+      <!-- Logo Brand -->
+      <div class="flex items-center gap-2">
+        <div class="w-2.5 h-2.5 rounded-full bg-gradient-to-br from-[#fca27e] to-[#ebdcd5] shadow-sm animate-pulse"></div>
+        <span class="text-xs font-black tracking-widest text-white uppercase font-display">Maternalink</span>
+      </div>
+
+      <!-- Links -->
+      <nav class="hidden sm:flex items-center gap-6 md:gap-8 text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+        <a href="#features" class="hover:text-white transition-colors">Platform</a>
+        <a href="#features" class="hover:text-white transition-colors">AI Telemetry</a>
+        <a href="#features" class="hover:text-white transition-colors">Security</a>
+      </nav>
+
+      <!-- CTA -->
+      <div>
+        {user ? (
+          <a href={user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'NURSE' ? '/nurse/dashboard' : '/lhw/dashboard'} class="bg-white hover:bg-slate-100 text-[#1c1421] font-extrabold text-[9px] uppercase tracking-widest py-2 px-4 sm:px-5.5 rounded-full shadow-sm transition-all duration-300">
+            Console
+          </a>
+        ) : (
+          <a href="/login" class="bg-white hover:bg-slate-100 text-[#1c1421] font-extrabold text-[9px] uppercase tracking-widest py-2 px-4 sm:px-5.5 rounded-full shadow-sm transition-all duration-300">
+            Login
+          </a>
+        )}
+      </div>
+    </header>
+  </div>
+
+  <!-- Hero Content Centered Section -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 lg:pt-20 text-center relative z-10 w-full">
+    
+    <!-- Serene Conversational Badge -->
+    <div class="inline-flex items-center gap-2 py-1.5 px-4 bg-white/75 border border-white/95 rounded-full shadow-sm mb-6">
+      <span class="text-[9px] font-extrabold uppercase tracking-widest text-[#70567c]">Unlock Conversational Power</span>
+    </div>
+
+    <!-- Centered Sleek, Elegant Light Typography (Vibe shift & Scaled Responsively) -->
+    <h1 class="text-3xl sm:text-5xl md:text-6xl lg:text-[76px] font-extralight tracking-tight text-[#2c1d30] leading-[1.05] max-w-5xl mx-auto font-display text-glow">
+      Empower <span class="font-normal text-[#1e1322]">Maternal Safety</span> <br class="hidden sm:inline"/>
+      with Next-Gen <span class="font-normal italic text-[#70567c]">AI Telemetry</span>
+    </h1>
+
+    <!-- Subtitle -->
+    <p class="text-xs sm:text-sm text-[#5c4a63] font-medium leading-relaxed max-w-2xl mx-auto mt-6 px-2">
+      Bridging frontline health workers directly to facility clinical nurses and district headquarters. Elevate patient outcomes with secure, de-identified risk models powered by Gemma AI.
+    </p>
+
+    <!-- Center CTA -->
+    <div class="mt-8 flex justify-center">
+      {user ? (
+        <a href={user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'NURSE' ? '/nurse/dashboard' : '/lhw/dashboard'} class="bg-[#1c1421] hover:bg-[#2e2336] text-white font-extrabold text-[10px] tracking-widest uppercase py-3.5 px-8 sm:px-9 rounded-full shadow-md transition-all duration-300 hover:scale-[1.01]">
+          Resume Command Console
+        </a>
+      ) : (
+        <a href="/login" class="bg-[#1c1421] hover:bg-[#2e2336] text-white font-extrabold text-[10px] tracking-widest uppercase py-3.5 px-8 sm:px-9 rounded-full shadow-md transition-all duration-300 hover:scale-[1.01]">
+          Access Command Platform
+        </a>
+      )}
+    </div>
+
+    <!-- Interactive Dashboard Mockup Preview Container (Premium Spatial Command Dashboard style) -->
+    <div class="mt-16 lg:mt-20 max-w-5xl mx-auto relative px-2 sm:px-0">
+      <!-- Ambient light underglow -->
+      <div class="absolute inset-0 bg-gradient-to-t from-[#eadaf5]/40 to-transparent blur-3xl -z-10"></div>
+      
+      <!-- Styled Spatial 3D Preview Frame -->
+      <div class="dashboard-mockup rounded-[36px] overflow-hidden p-3 border border-white/80 shadow-2xl">
+        
+        <!-- Scrollable viewport for clean responsive rendering on tablets and mobile devices -->
+        <div class="w-full overflow-x-auto scrollbar-thin">
+          <div class="min-w-[950px] rounded-[28px] text-[#2c1d30] overflow-hidden text-left relative h-[560px] border border-white/60 shadow-inner bg-cover bg-center select-none" style="background-image: url('/dashboard.png');">
+            
+            <!-- Sleek Top Status Pill Bar (Floating overlay inside the spatial view) -->
+            <div class="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
+              <div class="backdrop-blur-md bg-white/70 border border-white/80 rounded-full px-4 py-1.5 flex items-center gap-2.5 shadow-md pointer-events-auto">
+                <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                <span class="text-[9px] font-black uppercase tracking-widest text-[#70567c]">Live District Command Active</span>
+              </div>
+              <div class="backdrop-blur-md bg-white/70 border border-white/80 rounded-full px-4 py-1.5 flex items-center gap-2.5 shadow-md pointer-events-auto">
+                <span class="text-[9px] font-black uppercase tracking-widest text-[#2c1d30]">Sister Parveen Bano (Nurse)</span>
+              </div>
+            </div>
+
+            <!-- Left Controls: Floating Zoom/Dimension Pill (Exactly like inspiration!) -->
+            <div class="absolute top-24 left-6 z-20 flex flex-col gap-3">
+              <div class="backdrop-blur-xl bg-white/40 border border-white/50 rounded-full py-4 px-2 flex flex-col items-center gap-4 text-xs font-black text-[#2c1d30] shadow-xl w-10">
+                <button class="hover:text-[#70567c] transition-colors cursor-pointer">+</button>
+                <span class="w-full h-[1px] bg-[#2c1d30]/10"></span>
+                <button class="hover:text-[#70567c] transition-colors cursor-pointer">−</button>
+              </div>
+              <div class="backdrop-blur-xl bg-white/40 border border-white/50 rounded-full py-2.5 px-2 flex flex-col items-center justify-center text-[8px] font-black text-[#2c1d30] shadow-xl w-10 uppercase tracking-widest">
+                2D
+              </div>
+            </div>
+
+            <!-- Top-Right Card: Floating Expectant Mother Vitals ("2-Bedroom Aparts" Golden Glass clone) -->
+            <div class="absolute top-20 right-6 z-20 w-80 backdrop-blur-xl bg-[#fcf8f2]/60 border border-white/60 shadow-2xl rounded-[32px] p-6 transition-all duration-300 hover:bg-[#fcf8f2]/75">
+              <div class="flex items-center justify-between mb-4">
+                <span class="text-[8px] font-black text-[#c47c3a] uppercase tracking-widest">Elevated Risk Mother</span>
+                <span class="w-2 h-2 rounded-full bg-[#c47c3a]"></span>
+              </div>
+
+              <!-- Title / Detail -->
+              <h4 class="text-xl font-light text-[#2c1d30] leading-tight font-display mb-1">
+                Sajida Bibi
+              </h4>
+              <p class="text-[10px] text-[#765e82] font-black uppercase tracking-widest mb-6">
+                Gestation: 32 Weeks
+              </p>
+
+              <!-- Progress Sliders (Replicating IRR / Efficiency Ratio) -->
+              <div class="space-y-4 mb-6">
+                <div>
+                  <div class="flex items-center justify-between text-[9px] font-bold text-[#5c4a63] mb-1">
+                    <span>Blood Pressure Severity</span>
+                    <span class="font-mono text-[#c47c3a]">88%</span>
+                  </div>
+                  <div class="h-1 bg-white/40 rounded-full overflow-hidden relative">
+                    <div class="absolute top-0 bottom-0 left-0 w-[88%] bg-gradient-to-r from-[#c47c3a] to-[#e49b55] rounded-full"></div>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between text-[9px] font-bold text-[#5c4a63] mb-1">
+                    <span>Pre-Eclampsia Risk Indicator</span>
+                    <span class="font-mono text-[#c47c3a]">6.2</span>
+                  </div>
+                  <div class="h-1 bg-white/40 rounded-full overflow-hidden relative">
+                    <div class="absolute top-0 bottom-0 left-0 w-[62%] bg-gradient-to-r from-[#c47c3a] to-[#e49b55] rounded-full"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Price/Value Highlight & Action Button -->
+              <div class="flex items-center justify-between mt-8 pt-4 border-t border-[#2c2230]/5">
+                <div>
+                  <span class="text-[9px] text-[#765e82] font-black uppercase tracking-widest block">BP Metric</span>
+                  <span class="text-xl font-bold font-display text-[#2c1d30]">154/98</span>
+                </div>
+                <button class="bg-[#1c1421] hover:bg-[#2e2336] text-white font-extrabold text-[9px] uppercase tracking-widest py-3 px-5 rounded-full shadow-md transition-colors duration-300">
+                  Dispatch Ambulance
+                </button>
+              </div>
+            </div>
+
+            <!-- Bottom-Left Card: Triage Map Coordinates ("UNIT MIX MAP" Dark Glass clone) -->
+            <div class="absolute bottom-20 left-6 z-20 w-96 backdrop-blur-xl bg-[#1c1421]/15 border border-white/20 shadow-2xl rounded-[32px] p-6 hover:bg-[#1c1421]/20 transition-all duration-300">
+              <span class="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-3">District Cohort Triage</span>
+              
+              <!-- Map Plot dots visualization area (HTML simulation) -->
+              <div class="h-28 rounded-2xl bg-white/10 border border-white/10 relative overflow-hidden mb-4 p-2 flex items-center justify-center">
+                <!-- Glowing node coordinate circles floating -->
+                <div class="absolute top-1/4 left-1/3 w-3 h-3 rounded-full bg-[#fca27e] animate-ping"></div>
+                <div class="absolute top-1/4 left-1/3 w-2 h-2 rounded-full bg-[#fca27e]"></div>
+
+                <div class="absolute bottom-1/3 right-1/4 w-3 h-3 rounded-full bg-rose-400 animate-ping"></div>
+                <div class="absolute bottom-1/3 right-1/4 w-2 h-2 rounded-full bg-rose-400"></div>
+
+                <div class="absolute top-1/2 right-1/2 w-2 h-2 rounded-full bg-[#e49b55]"></div>
+
+                <!-- Dotted Grid Simulation -->
+                <div class="absolute inset-0 grid grid-cols-6 grid-rows-4 opacity-15">
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                  <div class="border-[0.5px] border-dashed border-white/40"></div>
+                </div>
+
+                <span class="text-[9px] font-black text-white/50 uppercase tracking-widest z-10">Telemetry Signal Overlay</span>
+              </div>
+
+              <!-- Button at center -->
+              <div class="flex justify-center">
+                <button class="bg-[#1c1421] hover:bg-[#2e2336] text-white font-extrabold text-[8px] uppercase tracking-widest py-2 px-5 rounded-full shadow-md transition-colors duration-300">
+                  Filter Active Cohorts
+                </button>
+              </div>
+            </div>
+
+            <!-- Very Bottom Left: Sleek Speech Capsule Pill ("Find 2-Bedroom Aparts" White Glass clone) -->
+            <div class="absolute bottom-4 left-6 z-20 w-[420px] backdrop-blur-xl bg-white/75 border border-white/70 shadow-2xl rounded-full py-2.5 px-4 flex items-center justify-between gap-4 text-xs">
+              <div class="flex items-center gap-2 flex-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[#70567c] animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                <span class="text-[#2c1d30] font-semibold text-[10px] truncate">Gemma Speech: "Find pre-eclampsia indicators in Mithi"</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                <span class="text-[8px] font-black uppercase text-[#70567c] tracking-widest mr-2">Ready</span>
+                <button class="w-8 h-8 rounded-full bg-[#1c1421] hover:bg-[#2e2336] text-white flex items-center justify-center shadow-md transition-colors duration-300">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Very Bottom Right: Dock Navigator Pill ("Bottom Dock" Navigation clone) -->
+            <div class="absolute bottom-4 right-6 z-20 backdrop-blur-xl bg-white/55 border border-white/50 shadow-2xl rounded-full px-5 py-2.5 flex items-center gap-6">
+              <button class="text-[#2c1d30] hover:text-[#70567c] transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+              </button>
+              <button class="text-[#2c1d30]/60 hover:text-[#70567c] transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10a2 2 0 01-2 2h-2a2 2 0 01-2-2zM9 19h6v1a2 2 0 002 2h2a2 2 0 002-2v-7a2 2 0 00-2-2h-2a2 2 0 00-2 2v8z" />
+                </svg>
+              </button>
+              <button class="text-[#2c1d30]/60 hover:text-[#70567c] transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              </button>
+              <button class="text-[#2c1d30]/60 hover:text-[#70567c] transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature Bento Section below the mockup (Spacious, Minimal, Pleasant & Fully Grid Responsive) -->
+    <section id="features" class="mt-24 lg:mt-32 max-w-5xl mx-auto text-left relative z-20 px-2 sm:px-0">
+      
+      <!-- Title -->
+      <div class="text-center mb-12 lg:mb-16">
+        <h2 class="text-2xl sm:text-3xl md:text-4xl font-extralight tracking-tight text-[#2c1d30] font-display">
+          Deep Telemetry. <span class="font-normal">Safe Execution.</span>
+        </h2>
+        <p class="text-[9px] text-[#70567c] font-black uppercase tracking-widest mt-3">Precision Clinical Infrastructure</p>
+      </div>
+
+      <!-- Bento Cards Grid (1 col on mobile, 3 cols on desktop) -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
+        <!-- Feature 1 -->
+        <div class="feature-card rounded-3xl p-6 sm:p-8 flex flex-col justify-between min-h-[200px] w-full">
+          <div>
+            <div class="w-8 h-8 rounded-full bg-[#ffd9cc]/60 flex items-center justify-center mb-6">
+              <span class="w-2 h-2 rounded-full bg-[#fca27e]"></span>
+            </div>
+            <h3 class="text-base sm:text-lg font-normal tracking-tight text-[#2c1d30] font-display mb-3">Real-Time Obstetric AI</h3>
+            <p class="text-[11px] text-[#5c4a63] font-medium leading-relaxed">
+              Gemma-9B extracts and parses vital markers directly from frontline feeds, detecting risk signals within milliseconds.
+            </p>
+          </div>
+        </div>
+
+        <!-- Feature 2 -->
+        <div class="feature-card rounded-3xl p-6 sm:p-8 flex flex-col justify-between min-h-[200px] w-full">
+          <div>
+            <div class="w-8 h-8 rounded-full bg-[#ffd6db]/60 flex items-center justify-center mb-6">
+              <span class="w-2 h-2 rounded-full bg-[#f895a0]"></span>
+            </div>
+            <h3 class="text-base sm:text-lg font-normal tracking-tight text-[#2c1d30] font-display mb-3">De-Identified Secure Vault</h3>
+            <p class="text-[11px] text-[#5c4a63] font-medium leading-relaxed">
+              Patient identities are scrubbed locally before transmitting metadata, ensuring full HIPAA compliance over cellular towers.
+            </p>
+          </div>
+        </div>
+
+        <!-- Feature 3 -->
+        <div class="feature-card rounded-3xl p-6 sm:p-8 flex flex-col justify-between min-h-[200px] w-full">
+          <div>
+            <div class="w-8 h-8 rounded-full bg-[#eadaf5]/60 flex items-center justify-center mb-6">
+              <span class="w-2 h-2 rounded-full bg-[#ac8dd9]"></span>
+            </div>
+            <h3 class="text-base sm:text-lg font-normal tracking-tight text-[#2c1d30] font-display mb-3">Instant HQ Dispatch</h3>
+            <p class="text-[11px] text-[#5c4a63] font-medium leading-relaxed">
+              Nurses and district emergency coordinators can monitor risk-levels instantly, executing rapid dispatches with one tap.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Clean Bottom Grayscale Partner Logos (Supermi style & Fully Responsive flex wraps) -->
+  <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16 mt-16 border-t border-[#2c2230]/5 text-center relative z-20 w-full">
+    <div class="flex flex-wrap items-center justify-center gap-8 md:gap-16 opacity-30 hover:opacity-50 transition-opacity">
+      <span class="text-[10px] sm:text-xs font-black tracking-widest text-[#2c2230] uppercase">UNICEF</span>
+      <span class="text-[10px] sm:text-xs font-black tracking-widest text-[#2c2230] uppercase">WHO</span>
+      <span class="text-[10px] sm:text-xs font-black tracking-widest text-[#2c2230] uppercase">SUPABASE</span>
+      <span class="text-[10px] sm:text-xs font-black tracking-widest text-[#2c2230] uppercase">GEMMA AI</span>
+      <span class="text-[10px] sm:text-xs font-black tracking-widest text-[#2c2230] uppercase">MINISTRY OF HEALTH</span>
+    </div>
+  </section>
+
+  <!-- Clean Minimalist Footer (Fully Responsive Layout columns) -->
+  <footer class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 border-t border-[#2c2230]/5 text-[9px] text-[#786480] font-bold uppercase tracking-widest flex flex-col sm:flex-row items-center justify-between gap-4 relative z-20 w-full">
+    <p class="text-center sm:text-left">&copy; 2026 Maternalink Cloud Network. All rights reserved.</p>
+    <div class="flex gap-6 sm:gap-8 justify-center">
+      <a href="#privacy" class="hover:text-[#2c2230] transition-colors">Privacy Principles</a>
+      <a href="#standards" class="hover:text-[#2c2c2c] transition-colors">Clinical Guidelines</a>
+    </div>
+  </footer>
+
+</body>
+</html>

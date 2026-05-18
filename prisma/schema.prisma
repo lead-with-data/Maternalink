@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  NURSE
+  LHW
+}
+
+enum RiskCategory {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model District {
+  id         Int              @id @default(autoincrement())
+  name       String           @unique
+  facilities HealthFacility[]
+  createdAt  DateTime         @default(now())
+}
+
+model HealthFacility {
+  id         Int      @id @default(autoincrement())
+  name       String
+  districtId Int
+  district   District @relation(fields: [districtId], references: [id], onDelete: Cascade)
+  users      User[]
+  patients   Patient[]
+  createdAt  DateTime @default(now())
+}
+
+model User {
+  id               String          @id @default(uuid())
+  name             String
+  mobile           String          @unique
+  password         String
+  role             Role            @default(LHW)
+  cnic             String?
+  healthFacilityId Int?
+  healthFacility   HealthFacility? @relation(fields: [healthFacilityId], references: [id], onDelete: SetNull)
+  assignedPatients Patient[]       @relation("LHWPatients")
+  resolvedAlerts   Alert[]         @relation("AlertResolver")
+  auditLogs        AuditLog[]
+  createdAt        DateTime        @default(now())
+}
+
+model Patient {
+  id               String         @id @default(uuid())
+  name             String
+  mobile           String?
+  cnic             String?
+  age              Int
+  address          String?
+  healthFacilityId Int
+  healthFacility   HealthFacility @relation(fields: [healthFacilityId], references: [id], onDelete: Cascade)
+  lhwId            String
+  lhw              User           @relation("LHWPatients", fields: [lhwId], references: [id], onDelete: Cascade)
+  pregnancies      Pregnancy[]
+  createdAt        DateTime       @default(now())
+}
+
+model Pregnancy {
+  id               String    @id @default(uuid())
+  patientId        String
+  patient          Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  startDate        DateTime
+  expectedDueDate  DateTime
+  parity           Int
+  gravida          Int
+  isActive         Boolean   @default(true)
+  visits           Visit[]
+  createdAt        DateTime  @default(now())
+}
+
+model Visit {
+  id              String       @id @default(uuid())
+  pregnancyId     String
+  pregnancy       Pregnancy    @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
+  visitDate       DateTime     @default(now())
+  gestationalWeeks Int
+  systolicBP      Int
+  diastolicBP     Int
+  hemoglobin      Float
+  weight          Float
+  fetalHeartRate  Int?
+  symptoms        String       // JSON array of selected symptoms
+  voiceTranscript String?      // Urdu transcript text
+  riskScore       Int          @default(0)
+  riskCategory    RiskCategory @default(LOW)
+  medications     String?
+  adviceUrdu      String?      // Gemma generated Urdu advice card
+  alerts          Alert[]
+  createdAt       DateTime     @default(now())
+}
+
+model Alert {
+  id           String    @id @default(uuid())
+  visitId      String
+  visit        Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  type         String    // e.g. "Severe Hypertension", "Severe Anemia", "Fetal Distress"
+  severity     Severity  @default(MEDIUM)
+  message      String
+  isDispatched Boolean   @default(false)
+  dispatchedAt DateTime?
+  resolved     Boolean   @default(false)
+  resolvedAt   DateTime?
+  resolverId   String?
+  resolver     User?     @relation("AlertResolver", fields: [resolverId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // e.g. "VIEW_PATIENT", "RELEASE_EMERGENCY_ACTION", "EXPORT_ANONYMOUS_DATA"
+  details   String
+  timestamp DateTime @default(now())
+}

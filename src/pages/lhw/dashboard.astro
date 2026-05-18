@@ -1,0 +1,1148 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { db } from '../../lib/db';
+import { verifySession } from '../../lib/session';
+import { analyzePregnancyRisk } from '../../services/openrouter';
+import { RiskCategory, Severity } from '@prisma/client';
+import { streamDimensionToBigQuery, streamVisitFactToBigQuery, getLHWBigQueryMetrics } from '../../services/bigquery';
+
+const sessionCookie = Astro.cookies.get('maternalink_session')?.value;
+const user = sessionCookie ? verifySession(sessionCookie) : null;
+
+// Secure LHW role gate
+if (!user || user.role !== 'LHW') {
+  return Astro.redirect('/login');
+}
+
+let successMessage = '';
+let errorMessage = '';
+
+// Load LHW clinic/facility assignment detail
+const lhwUser = await db.user.findUnique({
+  where: { id: user.id },
+  include: { healthFacility: true }
+});
+
+let facilityId = lhwUser?.healthFacilityId;
+if (!facilityId) {
+  const firstFacility = await db.healthFacility.findFirst();
+  facilityId = firstFacility?.id || 1;
+}
+const facilityName = lhwUser?.healthFacility?.name || "Rural Health Clinic";
+
+/**
+ * Standard utility to parse the new JSON symptoms payload, accommodating legacy formats safely.
+ */
+function parseCheckupSymptoms(symptomsStr: string) {
+  try {
+    const parsed = JSON.parse(symptomsStr);
+    if (Array.isArray(parsed)) {
+      return {
+        checklist: parsed,
+        pulse: null,
+        temperature: null,
+        oxygenSat: null,
+        respiratoryRate: null,
+        height: null,
+        urineProtein: 'None',
+        fastingSugar: null,
+        randomSugar: null,
+        ironAdherence: 'Yes',
+        missedDoses: 'No'
+      };
+    }
+    return {
+      checklist: parsed.checklist || [],
+      pulse: parsed.pulse || null,
+      temperature: parsed.temperature || null,
+      oxygenSat: parsed.oxygenSat || null,
+      respiratoryRate: parsed.respiratoryRate || null,
+      height: parsed.height || null,
+      urineProtein: parsed.urineProtein || 'None',
+      fastingSugar: parsed.fastingSugar || null,
+      randomSugar: parsed.randomSugar || null,
+      ironAdherence: parsed.ironAdherence || 'Yes',
+      missedDoses: parsed.missedDoses || 'No'
+    };
+  } catch (e) {
+    return {
+      checklist: symptomsStr ? [symptomsStr] : [],
+      pulse: null,
+      temperature: null,
+      oxygenSat: null,
+      respiratoryRate: null,
+      height: null,
+      urineProtein: 'None',
+      fastingSugar: null,
+      randomSugar: null,
+      ironAdherence: 'Yes',
+      missedDoses: 'No'
+    };
+  }
+}
+
+// POST handlers for patient registering & vital telemetry checkups
+if (Astro.request.method === 'POST') {
+  try {
+    const formData = await Astro.request.formData();
+    const action = formData.get('action')?.toString();
+
+    if (action === 'register-mother') {
+      const name = formData.get('name')?.toString().trim() || '';
+      const mobile = formData.get('mobile')?.toString().trim() || '';
+      const cnic = formData.get('cnic')?.toString().trim() || '';
+      const ageStr = formData.get('age')?.toString() || '';
+      const address = formData.get('address')?.toString().trim() || '';
+      const gestWeeksStr = formData.get('gestationalWeeks')?.toString() || '0';
+      const gravidaStr = formData.get('gravida')?.toString() || '0';
+      const paraStr = formData.get('para')?.toString() || '0';
+
+      // Advanced longitudinal socio-behavioral metadata
+      const familyContact = formData.get('familyContact')?.toString().trim() || 'N/A';
+      const education = formData.get('education')?.toString() || 'None';
+      const socioeconomic = formData.get('socioeconomic')?.toString() || 'Low';
+      const phoneOwnership = formData.get('phoneOwnership')?.toString() || 'None';
+      const miscarriages = formData.get('miscarriages')?.toString() || '0';
+      const stillbirths = formData.get('stillbirths')?.toString() || '0';
+      const cSections = formData.get('cSections')?.toString() || '0';
+      const prematureBirths = formData.get('prematureBirths')?.toString() || '0';
+      const historyHemorrhage = formData.get('historyHemorrhage')?.toString() || 'No';
+      const neonatalDeaths = formData.get('neonatalDeaths')?.toString() || '0';
+      const hospitalDistance = formData.get('hospitalDistance')?.toString() || '0';
+      const cleanWaterAccess = formData.get('cleanWaterAccess')?.toString() || 'No';
+      const nutritionAccess = formData.get('nutritionAccess')?.toString() || 'Average';
+
+      if (!name || !ageStr) {
+        errorMessage = 'Mother Name and Age are mandatory fields.';
+      } else {
+        const age = parseInt(ageStr);
+        const gestWeeks = parseInt(gestWeeksStr);
+        const gravida = parseInt(gravidaStr);
+        const para = parseInt(paraStr);
+
+        // Serialize social & obstetric parameters inside Patient's address
+        const addressMetadata = {
+          streetAddress: address,
+          familyContact,
+          education,
+          socioeconomic,
+          phoneOwnership,
+          miscarriages: parseInt(miscarriages) || 0,
+          stillbirths: parseInt(stillbirths) || 0,
+          cSections: parseInt(cSections) || 0,
+          prematureBirths: parseInt(prematureBirths) || 0,
+          historyHemorrhage,
+          neonatalDeaths: parseInt(neonatalDeaths) || 0,
+          hospitalDistance: parseFloat(hospitalDistance) || 0,
+          cleanWaterAccess,
+          nutritionAccess
+        };
+        const serializedAddress = JSON.stringify(addressMetadata);
+
+        const newPatient = await db.patient.create({
+          data: {
+            name,
+            mobile,
+            cnic,
+            age,
+            address: serializedAddress,
+            healthFacilityId: facilityId,
+            lhwId: user.id,
+            pregnancies: {
+              create: {
+                startDate: new Date(Date.now() - (gestWeeks * 7 * 24 * 60 * 60 * 1000)),
+                expectedDueDate: new Date(Date.now() + ((40 - gestWeeks) * 7 * 24 * 60 * 60 * 1000)),
+                parity: para,
+                gravida: gravida,
+                isActive: true
+              }
+            }
+          },
+          include: {
+            pregnancies: true
+          }
+        });
+
+        // Stream newly registered mother to BigQuery Analytics
+        try {
+          const activePreg = newPatient.pregnancies.find(p => p.isActive);
+          await streamDimensionToBigQuery(newPatient, activePreg);
+        } catch (bqErr) {
+          console.error('[BigQuery Sync Fail] error streaming registered dimensions:', bqErr);
+        }
+
+        // Security logs
+        await db.auditLog.create({
+          data: {
+            userId: user.id,
+            action: 'REGISTER_MOTHER',
+            details: `LHW registered mother ${name} (Age: ${age}) with full obstetric history.`
+          }
+        });
+
+        successMessage = `New expectant mother successfully registered: ${name}.`;
+      }
+    } else if (action === 'record-checkup') {
+      const pregnancyId = formData.get('pregnancyId')?.toString() || '';
+      const gestWeeksStr = formData.get('gestationalWeeks')?.toString() || '0';
+      const systolicStr = formData.get('systolicBP')?.toString() || '';
+      const diastolicStr = formData.get('diastolicBP')?.toString() || '';
+      const hemoglobinStr = formData.get('hemoglobin')?.toString() || '';
+      const weightStr = formData.get('weight')?.toString() || '';
+      const fhrStr = formData.get('fetalHeartRate')?.toString() || '';
+      const voiceTranscript = formData.get('voiceTranscript')?.toString().trim() || '';
+      const symptomsArray = formData.getAll('symptoms').map(s => s.toString());
+
+      // Capture expanded clinical vitals & lab diagnostics from LHW
+      const pulseStr = formData.get('pulse')?.toString() || '72';
+      const tempStr = formData.get('temperature')?.toString() || '98.6';
+      const oxygenSatStr = formData.get('oxygenSat')?.toString() || '98';
+      const respiratoryRateStr = formData.get('respiratoryRate')?.toString() || 'N/A';
+      const heightStr = formData.get('height')?.toString() || 'N/A';
+      const urineProteinStr = formData.get('urineProtein')?.toString() || 'None';
+      const fastingSugarStr = formData.get('fastingSugar')?.toString() || 'N/A';
+      const randomSugarStr = formData.get('randomSugar')?.toString() || 'N/A';
+      const ironAdherenceStr = formData.get('ironAdherence')?.toString() || 'Yes';
+      const missedDosesStr = formData.get('missedDoses')?.toString() || 'No';
+
+      if (!pregnancyId || !systolicStr || !diastolicStr || !hemoglobinStr || !weightStr) {
+        errorMessage = 'BP, Hemoglobin, and Weight readings are required to process checkup telemetry.';
+      } else {
+        const gestWeeks = parseInt(gestWeeksStr);
+        const systolic = parseInt(systolicStr);
+        const diastolic = parseInt(diastolicStr);
+        const hemoglobin = parseFloat(hemoglobinStr);
+        const weight = parseFloat(weightStr);
+        const fetalHeartRate = fhrStr ? parseInt(fhrStr) : null;
+
+        const activePregnancy = await db.pregnancy.findUnique({
+          where: { id: pregnancyId },
+          include: { patient: true }
+        });
+
+        if (!activePregnancy) {
+          errorMessage = 'Active patient profile was not located in database.';
+        } else {
+          const patientObj = activePregnancy.patient;
+
+          // Serialize advanced vitals, lab reports, and medication adherence inside symptoms
+          const symptomsData = {
+            checklist: symptomsArray,
+            pulse: parseInt(pulseStr) || null,
+            temperature: parseFloat(tempStr) || null,
+            oxygenSat: parseInt(oxygenSatStr) || null,
+            respiratoryRate: respiratoryRateStr !== 'N/A' && respiratoryRateStr ? parseInt(respiratoryRateStr) : null,
+            height: heightStr !== 'N/A' && heightStr ? parseFloat(heightStr) : null,
+            urineProtein: urineProteinStr,
+            fastingSugar: fastingSugarStr !== 'N/A' && fastingSugarStr ? parseInt(fastingSugarStr) : null,
+            randomSugar: randomSugarStr !== 'N/A' && randomSugarStr ? parseInt(randomSugarStr) : null,
+            ironAdherence: ironAdherenceStr,
+            missedDoses: missedDosesStr
+          };
+          const serializedSymptoms = JSON.stringify(symptomsData);
+
+          // Pass the comprehensive vitals to our Gemma-4 decision support assistant
+          const visitData = {
+            gestationalAgeWeeks: gestWeeks,
+            systolicBp: systolic,
+            diastolicBp: diastolic,
+            hemoglobin: hemoglobin,
+            temperature: parseFloat(tempStr) || 98.6,
+            weight: weight,
+            symptoms: symptomsArray.join(', '),
+            heartRate: parseInt(pulseStr) || 80,
+            oxygenSat: parseInt(oxygenSatStr) || 98,
+            urineProtein: urineProteinStr,
+            bloodGlucose: (randomSugarStr && randomSugarStr !== 'N/A') ? parseInt(randomSugarStr) : ((fastingSugarStr && fastingSugarStr !== 'N/A') ? parseInt(fastingSugarStr) : undefined),
+            ironAdherence: ironAdherenceStr
+          };
+
+          const aiResult = await analyzePregnancyRisk(patientObj, visitData);
+
+          let riskCat = RiskCategory.LOW;
+          if (aiResult.riskCategory === 'HIGH_RISK') riskCat = RiskCategory.HIGH;
+          if (aiResult.riskCategory === 'CRITICAL') riskCat = RiskCategory.CRITICAL;
+
+          const newVisit = await db.visit.create({
+            data: {
+              pregnancyId,
+              gestationalWeeks: gestWeeks,
+              systolicBP: systolic,
+              diastolicBP: diastolic,
+              hemoglobin: hemoglobin,
+              weight: weight,
+              fetalHeartRate,
+              symptoms: serializedSymptoms,
+              voiceTranscript: voiceTranscript || aiResult.clinicalSummary,
+              riskScore: aiResult.score,
+              riskCategory: riskCat,
+              medications: aiResult.recommendedActions.join('; '),
+              adviceUrdu: aiResult.clinicalSummary
+            }
+          });
+
+          // Stream telemetry fact and dimension snapshots to BigQuery Analytics
+          try {
+            await streamDimensionToBigQuery(patientObj, activePregnancy);
+            await streamVisitFactToBigQuery(newVisit, patientObj.id);
+          } catch (bqErr) {
+            console.error('[BigQuery Sync Fail] error streaming checkup transaction:', bqErr);
+          }
+
+          // Dispatch immediate command alert if risk rating is elevated
+          if (riskCat === RiskCategory.CRITICAL || riskCat === RiskCategory.HIGH) {
+            await db.alert.create({
+              data: {
+                visitId: newVisit.id,
+                type: riskCat === RiskCategory.CRITICAL ? "Obstetric Red Alert" : "Obstetric Amber Vigilance",
+                severity: riskCat === RiskCategory.CRITICAL ? Severity.CRITICAL : Severity.HIGH,
+                message: `[FIELD CLINICAL DISPATCH] Patient: ${patientObj.name}. Telemetry: BP ${systolic}/${diastolic}, HB ${hemoglobin}, Urine Protein: ${urineProteinStr}. Analysis: ${aiResult.clinicalSummary}`
+              }
+            });
+          }
+
+          // Audit log
+          await db.auditLog.create({
+            data: {
+              userId: user.id,
+              action: 'RECORD_CHECKUP',
+              details: `LHW checked mother ${patientObj.name}. Evaluation: Risk score ${aiResult.score} (${riskCat}).`
+            }
+          });
+
+          successMessage = `Maternal checkup saved! Clinical Decision Support rated as: ${riskCat} (${aiResult.score}% distress index).`;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("LHW post registration failure:", err);
+    errorMessage = 'Critical system error: Failed to process biometric write transactions.';
+  }
+}
+
+// Load patient profiles under LHW supervisor with Address/Symptoms parsed
+const rawPatients = await db.patient.findMany({
+  where: { lhwId: user.id },
+  include: {
+    pregnancies: {
+      include: {
+        visits: {
+          orderBy: { visitDate: 'desc' }
+        }
+      }
+    }
+  },
+  orderBy: { createdAt: 'desc' }
+});
+
+const patients = rawPatients.map(p => {
+  let streetAddress = p.address || '';
+  let metadata: any = {};
+  if (p.address && p.address.startsWith('{')) {
+    try {
+      metadata = JSON.parse(p.address);
+      streetAddress = metadata.streetAddress || '';
+    } catch (e) {
+      streetAddress = p.address;
+    }
+  }
+  return {
+    ...p,
+    streetAddress,
+    metadata
+  };
+});
+
+// Fetch live analytics metrics directly from BigQuery data warehouse with a seamless Postgres fallback
+let totalMothers = patients.length;
+let activeReferralsCount = patients.flatMap(p => p.pregnancies.flatMap(pr => pr.visits)).filter(v => v.riskCategory === RiskCategory.HIGH || v.riskCategory === RiskCategory.CRITICAL).length;
+let totalVisits = patients.flatMap(p => p.pregnancies.flatMap(pr => pr.visits)).length;
+let isFromDataWarehouse = false;
+
+try {
+  const bqMetrics = await getLHWBigQueryMetrics(user.id);
+  if (bqMetrics !== null) {
+    totalMothers = bqMetrics.totalMothers;
+    activeReferralsCount = bqMetrics.activeReferralsCount;
+    totalVisits = bqMetrics.totalVisits;
+    isFromDataWarehouse = true;
+    console.log(`[Dashboard] LHW ${user.id} live telemetry metrics loaded from BigQuery.`);
+  } else {
+    console.log(`[Dashboard] LHW ${user.id} falling back to PostgreSQL for live metrics.`);
+  }
+} catch (err) {
+  console.error('[Dashboard] Error fetching live BigQuery stats:', err);
+}
+
+const activePregnancies = patients.flatMap(p => p.pregnancies).filter(pr => pr.isActive);
+---
+
+<Layout title="LHW Portal | Field Obstetric Care & Telemetry Uplink">
+  <div class="min-h-screen text-[#2c1d30] flex flex-col font-sans relative overflow-x-hidden bg-cover bg-center bg-fixed" style="background-image: linear-gradient(rgba(28, 20, 33, 0.04), rgba(28, 20, 33, 0.07)), url('/login-signup.png');">
+    
+    <!-- Sticky capsule frosted header -->
+    <header class="sticky top-4 z-40 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="bg-[#1c1421]/90 backdrop-blur-xl border border-white/10 rounded-[24px] px-6 py-4 flex items-center justify-between shadow-lg">
+        <div class="flex items-center gap-3">
+          <div class="w-3 h-3 rounded-full bg-gradient-to-tr from-[#fca27e] to-[#ebdcd5] shadow-sm"></div>
+          <div>
+            <h1 class="text-sm font-black text-white uppercase tracking-widest leading-none">Maternalink</h1>
+            <p class="text-[9px] text-[#fca27e] font-black tracking-widest uppercase mt-0.5">LHW · Community Field Worker</p>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-5">
+          <div class="text-right hidden sm:block">
+            <p class="text-xs font-bold text-white leading-none">{user.name}</p>
+            <p class="text-[9px] text-[#ebdcd5]/70 font-mono tracking-wider mt-0.5">{facilityName}</p>
+          </div>
+          <a href="/logout" class="py-1.5 px-4 bg-white/10 hover:bg-rose-500/20 border border-white/15 hover:border-rose-400/40 text-slate-200 hover:text-white text-[9px] font-bold uppercase tracking-widest rounded-full transition-all cursor-pointer">
+            Sign Out
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 z-10 space-y-8">
+
+      <!-- ==================== HEADER OPERATIONS CONSOLE ==================== -->
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mt-2">
+        <div>
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <div class="inline-flex items-center gap-2 px-3 py-1 bg-white/90 backdrop-blur-md border border-white/60 rounded-full shadow-sm">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#ebdcd5] border border-[#9b6fa0]"></span>
+              <span class="text-[9px] font-black uppercase tracking-widest text-[#2c1d30]">Community Field Care Hub · Active Supervisor Session</span>
+            </div>
+            
+            {isFromDataWarehouse ? (
+              <div class="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 backdrop-blur-md border border-emerald-500/30 text-emerald-700 rounded-full shadow-sm">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span class="text-[9px] font-black uppercase tracking-widest">BigQuery Live DW Connected</span>
+              </div>
+            ) : (
+              <div class="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/10 backdrop-blur-md border border-amber-500/30 text-amber-700 rounded-full shadow-sm">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                <span class="text-[9px] font-black uppercase tracking-widest">PostgreSQL Fail-Safe Active</span>
+              </div>
+            )}
+          </div>
+          <h2 class="text-3xl font-light text-[#2c1d30] tracking-tight" style="font-family: 'Outfit', sans-serif;">
+            Expectant Cohort <span class="font-extrabold text-[#9b6fa0]">Field Monitor</span>
+          </h2>
+          <p class="text-[11px] text-[#5c4a63] font-medium tracking-wide mt-1">
+            Registering expectant mothers, recording clinical blood pressure/vitals telemetry, and generating decision support risk assessments.
+          </p>
+        </div>
+        
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="backdrop-blur-xl bg-white/90 border border-white/60 shadow-sm rounded-full px-3.5 py-1.5 flex items-center gap-3.5">
+            <a href="#cohort-ledger" class="text-[#9b6fa0] hover:text-[#c47c3a] transition-all" title="Cohort Ledger">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+              </svg>
+            </a>
+            <a href="#register" class="text-[#5c4a63] hover:text-[#c47c3a] transition-all" title="Register New Expectant Mother">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+              </svg>
+            </a>
+            <a href="#checkup" class="text-[#5c4a63] hover:text-[#c47c3a] transition-all" title="Log Clinical Checkup">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 00-2 2H7a2 2 0 002-2V7a2 2 0 00-2-2zM9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== HORIZONTAL OPERATIONAL STATS DOCK ==================== -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        
+        <!-- Card 1: Assigned Cohort -->
+        <div class="p-5 bg-white/70 backdrop-blur-xl border border-white/50 shadow-xl rounded-[28px] space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[9px] font-black text-[#765e82] uppercase tracking-widest block">Assigned Cohort</span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[#9b6fa0]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          </div>
+          <p class="text-4xl font-black text-[#2c1d30] font-mono leading-none">{totalMothers}</p>
+          <p class="text-[10px] text-[#5c4a63] font-bold">Mothers registered under surveillance</p>
+        </div>
+
+        <!-- Card 2: High-Risk Cases -->
+        <div class="p-5 bg-[#fcf8f2]/80 border border-[#ebdcd5] border-l-4 border-l-[#c47c3a] shadow-xl rounded-[28px] space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[9px] font-black text-[#c47c3a] uppercase tracking-widest block font-black">High-Risk Cases</span>
+            <span class="flex h-2 w-2 relative">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+            </span>
+          </div>
+          <p class="text-4xl font-black text-[#c47c3a] font-mono leading-none">{activeReferralsCount}</p>
+          <p class="text-[10px] text-[#5c4a63] font-bold">Mothers flagged for critical specialist care</p>
+        </div>
+
+        <!-- Card 3: Checkups Logged -->
+        <div class="p-5 bg-white/70 backdrop-blur-xl border border-white/50 shadow-xl rounded-[28px] space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[9px] font-black text-[#765e82] uppercase tracking-widest block">Checkups Logged</span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[#c47c3a]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 00-2 2H7a2 2 0 002-2V7a2 2 0 00-2-2zM9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          </div>
+          <p class="text-4xl font-black text-[#2c1d30] font-mono leading-none">{totalVisits}</p>
+          <p class="text-[10px] text-[#5c4a63] font-bold">Surveillance encounters documented</p>
+        </div>
+
+      </div>
+
+      {errorMessage && (
+        <div class="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-3 max-w-3xl mx-auto shadow-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-rose-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+          <span class="font-bold">{errorMessage}</span>
+        </div>
+      )}
+
+
+      <!-- ==================== INTERACTIVE DATA WORKSPACE ==================== -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+        <!-- Form 1: Register Expectant Mother -->
+        <div id="register" class="backdrop-blur-xl bg-white/75 border border-white/50 shadow-2xl rounded-[32px] p-8">
+          <div class="flex items-center gap-2.5 mb-6 border-b border-[#2c2230]/8 pb-4">
+            <span class="w-1.5 h-6 bg-[#9b6fa0] rounded-full"></span>
+            <h3 class="text-base font-black text-[#2c1d30]">Register New Expectant Mother</h3>
+          </div>
+
+          <form method="POST" class="space-y-4">
+            <input type="hidden" name="action" value="register-mother" />
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Mother Full Name *</label>
+                <input type="text" name="name" required placeholder="e.g. Fatima Bai" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Mobile Number</label>
+                <input type="text" name="mobile" placeholder="e.g. 03001234567" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">CNIC / ID Card</label>
+                <input type="text" name="cnic" placeholder="e.g. 44301-1234567-8" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Mother Age *</label>
+                <input type="number" name="age" required min="12" max="60" placeholder="e.g. 26" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Address / Village Locality</label>
+                <input type="text" name="address" placeholder="e.g. Village Mithrio, Diplo" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Husband/Family Phone *</label>
+                <input type="text" name="familyContact" required placeholder="e.g. 03017654321" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+            </div>
+
+            <!-- Socio-demographics & phone ownership -->
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Education</label>
+                <select name="education" class="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white">
+                  <option value="None">None</option>
+                  <option value="Primary">Primary</option>
+                  <option value="Secondary">Secondary</option>
+                  <option value="Higher">Higher</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Socioeconomic</label>
+                <select name="socioeconomic" class="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white">
+                  <option value="Low">Low Tier</option>
+                  <option value="Middle">Middle Tier</option>
+                  <option value="High">High Tier</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Phone Owner</label>
+                <select name="phoneOwnership" class="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white">
+                  <option value="Self">Self Owned</option>
+                  <option value="Husband">Husband's</option>
+                  <option value="Family">Shared Family</option>
+                  <option value="None">No Phone</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Obstetric background counters -->
+            <div class="bg-white/40 border border-[#ebdcd5]/70 rounded-xl p-3 space-y-3">
+              <span class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest">Obstetric History Background</span>
+              <div class="grid grid-cols-4 gap-2">
+                <div>
+                  <label class="block text-[7.5px] font-bold text-[#765e82] mb-1">Miscarriages</label>
+                  <input type="number" name="miscarriages" min="0" value="0" class="w-full text-xs font-semibold p-2 rounded-lg border border-[#ebdcd5] bg-white text-center" />
+                </div>
+                <div>
+                  <label class="block text-[7.5px] font-bold text-[#765e82] mb-1">Stillbirths</label>
+                  <input type="number" name="stillbirths" min="0" value="0" class="w-full text-xs font-semibold p-2 rounded-lg border border-[#ebdcd5] bg-white text-center" />
+                </div>
+                <div>
+                  <label class="block text-[7.5px] font-bold text-[#765e82] mb-1">C-Sections</label>
+                  <input type="number" name="cSections" min="0" value="0" class="w-full text-xs font-semibold p-2 rounded-lg border border-[#ebdcd5] bg-white text-center" />
+                </div>
+                <div>
+                  <label class="block text-[7.5px] font-bold text-[#765e82] mb-1">Neonatal Deaths</label>
+                  <input type="number" name="neonatalDeaths" min="0" value="0" class="w-full text-xs font-semibold p-2 rounded-lg border border-[#ebdcd5] bg-white text-center" />
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1">Premature Births</label>
+                  <input type="number" name="prematureBirths" min="0" value="0" class="w-full text-xs font-semibold px-3 py-2 rounded-lg border border-[#ebdcd5] bg-white" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1">Postpartum Hemorrhage?</label>
+                  <select name="historyHemorrhage" class="w-full text-xs font-semibold px-3 py-2 rounded-lg border border-[#ebdcd5] bg-white">
+                    <option value="No">No History</option>
+                    <option value="Yes">Yes, High Risk</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Public health determinatives -->
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1">Hospital (km)</label>
+                <input type="number" step="0.1" name="hospitalDistance" value="5.0" class="w-full text-xs font-semibold px-3 py-2 rounded-xl border border-[#ebdcd5] bg-white/50" />
+              </div>
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1">Clean Water?</label>
+                <select name="cleanWaterAccess" class="w-full text-xs font-semibold px-3 py-2 rounded-xl border border-[#ebdcd5] bg-white/50">
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1">Nutrition</label>
+                <select name="nutritionAccess" class="w-full text-xs font-semibold px-3 py-2 rounded-xl border border-[#ebdcd5] bg-white/50">
+                  <option value="Good">Good</option>
+                  <option value="Average" selected>Average</option>
+                  <option value="Poor">Poor</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 pt-2">
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Gestational Age *</label>
+                <input type="number" name="gestationalWeeks" required min="1" max="42" placeholder="Weeks" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Gravida (Pregnancies)</label>
+                <input type="number" name="gravida" min="1" max="20" placeholder="e.g. 2" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+              <div>
+                <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Para (Live Births)</label>
+                <input type="number" name="para" min="0" max="20" placeholder="e.g. 1" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+              </div>
+            </div>
+
+            <button type="submit" class="w-full py-3 bg-[#1c1421] hover:bg-[#2c2033] text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-md cursor-pointer mt-4">
+              Register Expectant Patient
+            </button>
+          </form>
+        </div>
+
+        <!-- Form 2: Record Biometric / Visit Checkup -->
+        <div id="checkup" class="backdrop-blur-xl bg-[#fcf8f2]/75 border border-white/50 shadow-2xl rounded-[32px] p-8">
+          <div class="flex items-center gap-2.5 mb-6 border-b border-[#2c2230]/8 pb-4">
+            <span class="w-1.5 h-6 bg-[#c47c3a] rounded-full"></span>
+            <h3 class="text-base font-black text-[#2c1d30]">Record Mother Vitals & Checkup</h3>
+          </div>
+
+          {activePregnancies.length === 0 ? (
+            <div class="text-center py-12 text-xs font-semibold text-[#765e82]">
+              ⚠️ Please register at least one mother first to record biometric health checkups.
+            </div>
+          ) : (
+            <form method="POST" class="space-y-4">
+              <input type="hidden" name="action" value="record-checkup" />
+
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Select Expectant Mother *</label>
+                <select name="pregnancyId" required class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none transition-all focus:bg-white">
+                  {patients.map(p => {
+                    const activeP = p.pregnancies.find(pr => pr.isActive);
+                    if (!activeP) return null;
+                    const latestVisit = activeP.visits[0];
+                    const riskText = latestVisit ? ` | Risk: ${latestVisit.riskCategory}` : '';
+                    return (
+                      <option value={activeP.id}>
+                        {p.name} (Age {p.age}){riskText}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <!-- ==================== INTERACTIVE LONGITUDINAL HEALTH PANEL ==================== -->
+              <div id="longitudinalPanel" class="hidden bg-[#ebdcd5]/20 border border-[#ebdcd5]/80 rounded-2xl p-4.5 space-y-2.5 transition-all">
+                <span class="block text-[8px] font-black text-[#9b6fa0] uppercase tracking-widest">
+                  🔗 Longitudinal Clinical Intelligence (Time Series Trends)
+                </span>
+                <div class="space-y-1.5 text-xs text-[#2c1d30]">
+                  <p class="text-[10px] text-[#5c4a63]" id="longitudinalTimeline"></p>
+                  <p class="text-[10px] text-[#5c4a63]">
+                    <strong>Clinical BP Trajectory:</strong> <span class="font-mono font-bold text-[#c47c3a]" id="longitudinalBPTrend"></span>
+                  </p>
+                  <p class="text-[10px] text-[#5c4a63]">
+                    <strong>Anemia Progression (Hb):</strong> <span class="font-mono font-bold text-[#c47c3a]" id="longitudinalAnemia"></span>
+                  </p>
+                  <p class="text-[10px] text-[#5c4a63]">
+                    <strong>Previously Advised Medicines:</strong> <span class="font-medium text-[#765e82]" id="longitudinalMeds"></span>
+                  </p>
+                </div>
+                <div class="border-t border-[#ebdcd5]/60 pt-2" id="longitudinalMetadata"></div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Gest Weeks *</label>
+                  <input type="number" name="gestationalWeeks" required min="1" max="42" placeholder="e.g. 24" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">BP Systolic *</label>
+                  <input type="number" name="systolicBP" required placeholder="e.g. 120" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">BP Diastolic *</label>
+                  <input type="number" name="diastolicBP" required placeholder="e.g. 80" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+                </div>
+              </div>
+
+              <!-- Vitals Core: Pulse, Temperature, SpO2 -->
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Pulse Rate (BPM) *</label>
+                  <input type="number" name="pulse" required value="72" min="40" max="200" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Temp (°F) *</label>
+                  <input type="number" step="0.1" name="temperature" required value="98.6" min="94" max="108" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Oxygen Sat (%) *</label>
+                  <input type="number" name="oxygenSat" required value="98" min="50" max="100" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">HB (g/dL) *</label>
+                  <input type="number" step="0.1" name="hemoglobin" required placeholder="e.g. 11.5" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Weight (kg) *</label>
+                  <input type="number" step="0.1" name="weight" required placeholder="e.g. 62" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">FHR (BPM)</label>
+                  <input type="number" name="fetalHeartRate" placeholder="e.g. 140" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all" />
+                </div>
+              </div>
+
+              <!-- Lab diagnostics and height (BMI auto-calc) -->
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Resp Rate (breaths)</label>
+                  <input type="text" name="respiratoryRate" placeholder="N/A" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Height (meters)</label>
+                  <input type="text" name="height" placeholder="N/A" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Urine Protein</label>
+                  <select name="urineProtein" class="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] outline-none focus:bg-white">
+                    <option value="None">None</option>
+                    <option value="Trace">Trace</option>
+                    <option value="+">+</option>
+                    <option value="++">++</option>
+                    <option value="+++">+++</option>
+                  </select>
+                </div>
+              </div>
+
+              <div id="bmiDisplay" class="text-[10px] font-bold tracking-wide text-right pr-2"></div>
+
+              <!-- Glucose glycemia testing -->
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Fasting Blood Sugar (mg/dL)</label>
+                  <input type="text" name="fastingSugar" placeholder="N/A" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50" />
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Random Blood Sugar (mg/dL)</label>
+                  <input type="text" name="randomSugar" placeholder="N/A" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50" />
+                </div>
+              </div>
+
+              <!-- Treatment behavior & tablet adherence -->
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Iron Tablet Adherence?</label>
+                  <select name="ironAdherence" class="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30]">
+                    <option value="Yes">Yes, Compliant</option>
+                    <option value="No">No, Missed</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[8px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Missed Other Med Doses?</label>
+                  <select name="missedDoses" class="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30]">
+                    <option value="No">No Misses</option>
+                    <option value="Yes">Yes, Irregular</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1.5">Obstetric Danger Symptoms</label>
+                <div class="grid grid-cols-2 gap-2 bg-white/40 border border-[#ebdcd5]/70 rounded-xl p-3">
+                  <label class="flex items-center gap-2 text-[10px] font-semibold text-[#2c1d30] cursor-pointer">
+                    <input type="checkbox" name="symptoms" value="Severe Headache" class="rounded border-[#ebdcd5] text-[#9b6fa0] focus:ring-[#9b6fa0]" />
+                    Severe Headache
+                  </label>
+                  <label class="flex items-center gap-2 text-[10px] font-semibold text-[#2c1d30] cursor-pointer">
+                    <input type="checkbox" name="symptoms" value="Vaginal Bleeding" class="rounded border-[#ebdcd5] text-[#9b6fa0] focus:ring-[#9b6fa0]" />
+                    Vaginal Bleeding
+                  </label>
+                  <label class="flex items-center gap-2 text-[10px] font-semibold text-[#2c1d30] cursor-pointer">
+                    <input type="checkbox" name="symptoms" value="Swollen Hands/Face" class="rounded border-[#ebdcd5] text-[#9b6fa0] focus:ring-[#9b6fa0]" />
+                    Swollen Hands/Face
+                  </label>
+                  <label class="flex items-center gap-2 text-[10px] font-semibold text-[#2c1d30] cursor-pointer">
+                    <input type="checkbox" name="symptoms" value="Blurry Vision" class="rounded border-[#ebdcd5] text-[#9b6fa0] focus:ring-[#9b6fa0]" />
+                    Blurry Vision
+                  </label>
+                  <label class="flex items-center gap-2 text-[10px] font-semibold text-[#2c1d30] cursor-pointer">
+                    <input type="checkbox" name="symptoms" value="Fever" class="rounded border-[#ebdcd5] text-[#9b6fa0] focus:ring-[#9b6fa0]" />
+                    Fever
+                  </label>
+                  <label class="flex items-center gap-2 text-[10px] font-semibold text-[#2c1d30] cursor-pointer">
+                    <input type="checkbox" name="symptoms" value="Decreased Fetal Movement" class="rounded border-[#ebdcd5] text-[#9b6fa0] focus:ring-[#9b6fa0]" />
+                    Decreased Movement
+                  </label>
+                </div>
+              </div>
+
+              <!-- Voice Transcription Segment -->
+              <div>
+                <label class="block text-[9px] font-black text-[#765e82] uppercase tracking-widest mb-1">
+                  Urdu Voice Note / Case Transcript
+                </label>
+                <div class="relative">
+                  <textarea name="voiceTranscript" rows="2" placeholder="e.g. مریضہ کو سر میں شدید درد ہے اور پچھلے دو دن سے پیروں میں سوزش ہے۔" class="w-full text-xs font-semibold px-4 py-2.5 rounded-xl border border-[#ebdcd5] bg-white/50 text-[#2c1d30] focus:bg-white focus:ring-2 focus:ring-[#9b6fa0] outline-none transition-all pr-12"></textarea>
+                  <div class="absolute right-3.5 top-3 w-7 h-7 bg-[#9b6fa0]/10 border border-[#9b6fa0]/25 rounded-full flex items-center justify-center text-[#9b6fa0]">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  </div>
+                </div>
+                <p class="text-[8.5px] text-[#765e82] mt-1 font-semibold">Automated processing analyzes the Urdu audio transcript to identify high-risk clinical terms.</p>
+              </div>
+
+              <button type="submit" class="w-full py-3 bg-[#c47c3a] hover:bg-[#b06f33] text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-md cursor-pointer mt-4">
+                Record Biometrics & Analyze Risk
+              </button>
+            </form>
+          )}
+        </div>
+
+      </div>
+
+      <!-- ==================== MOTHERS COHORT LEDGER ==================== -->
+      <section id="cohort-ledger" class="backdrop-blur-xl bg-white/75 border border-white/50 shadow-2xl rounded-[32px] p-8">
+        <div class="flex items-center justify-between mb-6 border-b border-[#2c2230]/8 pb-4">
+          <h2 class="text-base font-black text-[#2c1d30] flex items-center gap-2.5">
+            <span class="w-1.5 h-6 bg-[#9b6fa0] rounded-full"></span>
+            Community Patient Ledger & Clinical Outcomes
+          </h2>
+          <span class="text-[9px] uppercase tracking-widest font-extrabold bg-[#1c1421] text-brand-sand py-1 px-3 rounded-full">
+            Frontline Active Surveillance
+          </span>
+        </div>
+
+        {patients.length === 0 ? (
+          <div class="text-center py-12 text-[#765e82] text-xs font-bold uppercase tracking-wider">
+            🌾 You have not registered any expectant mothers yet. Use the registration panel above.
+          </div>
+        ) : (
+          <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-left">
+              <thead>
+                <tr class="border-b border-[#2c2230]/8 text-[#765e82]">
+                  <th class="py-3 px-4 text-[9px] font-black uppercase tracking-widest">Expectant Mother</th>
+                  <th class="py-3 px-4 text-[9px] font-black uppercase tracking-widest">Age / Mobile</th>
+                  <th class="py-3 px-4 text-[9px] font-black uppercase tracking-widest">Village Location</th>
+                  <th class="py-3 px-4 text-[9px] font-black uppercase tracking-widest">Active Gestation</th>
+                  <th class="py-3 px-4 text-[9px] font-black uppercase tracking-widest">Latest Checkup Vitals</th>
+                  <th class="py-3 px-4 text-[9px] font-black uppercase tracking-widest">Clinical Risk Assessment</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[#2c2230]/4">
+                {patients.map(p => {
+                  const activeP = p.pregnancies.find(pr => pr.isActive);
+                  const latestVisit = activeP?.visits[0];
+
+                  let riskBadgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                  if (latestVisit?.riskCategory === RiskCategory.HIGH) riskBadgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
+                  if (latestVisit?.riskCategory === RiskCategory.CRITICAL) riskBadgeColor = 'bg-rose-50 text-rose-800 border-rose-200';
+
+                  const checkupDetail = latestVisit ? parseCheckupSymptoms(latestVisit.symptoms) : null;
+
+                  return (
+                    <tr class="hover:bg-white/40 transition-colors text-xs">
+                      <td class="py-4 px-4">
+                        <div class="font-extrabold text-[#2c1d30] text-xs">{p.name}</div>
+                        {p.metadata.education && (
+                          <span class="inline-block text-[7.5px] font-bold bg-[#9b6fa0]/10 text-[#9b6fa0] px-1.5 py-0.5 rounded-full mt-1">
+                            Edu: {p.metadata.education}
+                          </span>
+                        )}
+                        <div class="text-[9px] text-[#765e82] font-mono mt-0.5">CNIC: {p.cnic || 'N/A'}</div>
+                      </td>
+                      <td class="py-4 px-4 text-xs font-semibold text-[#5c4a63]">
+                        <div>Age {p.age}</div>
+                        <div class="text-[9.5px] mt-0.5">{p.mobile || 'No Mobile'}</div>
+                      </td>
+                      <td class="py-4 px-4 text-xs font-semibold text-[#5c4a63]">
+                        <div>{p.streetAddress || 'Tharparkar Desert'}</div>
+                        {p.metadata.familyContact && (
+                          <div class="text-[8px] text-[#765e82] mt-0.5">Fam: {p.metadata.familyContact}</div>
+                        )}
+                      </td>
+                      <td class="py-4 px-4">
+                        {activeP ? (
+                          <div>
+                            <span class="text-xs font-extrabold text-[#2c1d30]">{latestVisit ? latestVisit.gestationalWeeks : 20} Weeks</span>
+                            <span class="block text-[8px] text-[#765e82] font-semibold mt-0.5">
+                              G{activeP.gravida} P{activeP.parity} | C-sec: {p.metadata.cSections || 0}
+                            </span>
+                          </div>
+                        ) : (
+                          <span class="text-[9px] text-[#765e82] font-bold">No Active Pregnancy</span>
+                        )}
+                      </td>
+                      <td class="py-4 px-4">
+                        {latestVisit ? (
+                          <div class="space-y-0.5">
+                            <div class="text-xs font-extrabold text-[#2c1d30] flex items-center gap-1.5">
+                              <span>BP: {latestVisit.systolicBP}/{latestVisit.diastolicBP}</span>
+                              <span class="text-[#ebdcd5]">|</span>
+                              <span>HB: {latestVisit.hemoglobin} g/dL</span>
+                            </div>
+                            {checkupDetail && (
+                              <div class="text-[8.5px] text-[#765e82] font-medium leading-none space-y-0.5">
+                                <p>Pulse: {checkupDetail.pulse || 'N/A'} bpm | SpO2: {checkupDetail.oxygenSat || 'N/A'}% | Temp: {checkupDetail.temperature || 'N/A'}°F</p>
+                                <p>Urine Prot: {checkupDetail.urineProtein || 'None'} | Iron Adh: {checkupDetail.ironAdherence || 'Yes'}</p>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span class="text-[9px] text-[#765e82] font-semibold italic">No checkup recorded yet</span>
+                        )}
+                      </td>
+                      <td class="py-4 px-4">
+                        {latestVisit ? (
+                          <div class="space-y-1">
+                            <span class={`inline-block text-[8px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full border ${riskBadgeColor}`}>
+                              {latestVisit.riskCategory} ({latestVisit.riskScore}%)
+                            </span>
+                            {latestVisit.adviceUrdu && (
+                              <p class="text-[9.5px] text-[#765e82] font-semibold max-w-[200px] truncate leading-tight mt-1" title={latestVisit.adviceUrdu}>
+                                {latestVisit.adviceUrdu}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span class="text-[9px] text-[#765e82] font-semibold">Pending First Checkup</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+    </main>
+
+    <footer class="py-12 border-t border-[#ebdcd5]/30 text-center max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 z-10">
+      <p class="text-[10px] font-bold text-[#765e82] uppercase tracking-widest">Maternalink Frontline Healthcare Network · Telemetry Node Tharparkar</p>
+      <p class="text-[8px] text-[#765e82]/70 uppercase tracking-widest mt-1.5">Secure clinical transmissions encrypted with local de-identified identifiers</p>
+    </footer>
+
+  </div>
+</Layout>
+
+<script is:inline define:vars={{ patients, successMessage }}>
+  // Longitudinal Cohort Data for client-side time-series rendering
+  window.LHW_PATIENTS_DATA = patients;
+
+  // Trigger an elegant floating corner toast upon successful action
+  if (successMessage) {
+    const toast = document.createElement('div');
+    toast.className = 'fixed bottom-6 right-6 px-6 py-4 bg-[#1c1421] text-white text-xs font-bold rounded-[20px] shadow-2xl border border-white/10 z-50 flex items-center gap-3 animate-fade-in transition-all';
+    toast.innerHTML = `
+      <div class="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center text-white font-bold shrink-0">✓</div>
+      <span>${successMessage}</span>
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(20px)';
+      setTimeout(() => toast.remove(), 500);
+    }, 4500);
+  }
+
+  // Cache panel references
+  const pregnancySelect = document.querySelector('select[name="pregnancyId"]');
+  const longitudinalPanel = document.getElementById('longitudinalPanel');
+  const timelineText = document.getElementById('longitudinalTimeline');
+  const bpTrendText = document.getElementById('longitudinalBPTrend');
+  const anemiaText = document.getElementById('longitudinalAnemia');
+  const medsText = document.getElementById('longitudinalMeds');
+  const metadataText = document.getElementById('longitudinalMetadata');
+
+  function updateLongitudinalContext() {
+    if (!pregnancySelect) return;
+    const selectedPregId = pregnancySelect.value;
+    if (!selectedPregId) return;
+
+    let matchedPatient = null;
+    let matchedPregnancy = null;
+
+    for (const p of window.LHW_PATIENTS_DATA) {
+      const activePreg = p.pregnancies.find(pr => pr.id === selectedPregId);
+      if (activePreg) {
+        matchedPatient = p;
+        matchedPregnancy = activePreg;
+        break;
+      }
+    }
+
+    if (!matchedPatient || !matchedPregnancy) {
+      if (longitudinalPanel) longitudinalPanel.classList.add('hidden');
+      return;
+    }
+
+    if (longitudinalPanel) longitudinalPanel.classList.remove('hidden');
+
+    // 1. Gestation info
+    const visits = matchedPregnancy.visits || [];
+    const weeks = visits[0] ? visits[0].gestationalWeeks : 20;
+    const g = matchedPregnancy.gravida || 1;
+    const p = matchedPregnancy.parity || 0;
+    timelineText.innerHTML = `Active Gestation: <strong>${weeks} Weeks</strong> | G${g} P${p} (Age ${matchedPatient.age})`;
+
+    // 2. Obstetric & Social history
+    const meta = matchedPatient.metadata || {};
+    metadataText.innerHTML = `
+      <div class="grid grid-cols-2 gap-2 text-[10px] text-[#5c4a63] font-semibold border-t border-[#ebdcd5]/50 pt-2.5 mt-2">
+        <div><strong>Education:</strong> ${meta.education || 'None'}</div>
+        <div><strong>Socioeconomic:</strong> ${meta.socioeconomic || 'Low'}</div>
+        <div><strong>Hospital Distance:</strong> ${meta.hospitalDistance ? meta.hospitalDistance + ' km' : 'N/A'}</div>
+        <div><strong>Clean Water:</strong> ${meta.cleanWaterAccess || 'No'}</div>
+        <div><strong>C-Sections:</strong> ${meta.cSections || 0}</div>
+        <div><strong>Miscarriages:</strong> ${meta.miscarriages || 0}</div>
+        <div><strong>Husband Contact:</strong> ${meta.familyContact || 'N/A'}</div>
+      </div>
+    `;
+
+    // 3. Vitals Time-Series Progression
+    if (visits.length === 0) {
+      bpTrendText.innerHTML = "No past checkups recorded. Baseline vitals pending.";
+      anemiaText.innerHTML = "Baseline hemoglobin pending.";
+      medsText.innerHTML = "None advised yet.";
+    } else {
+      // BP progression
+      const bpList = [...visits].reverse().map(v => `${v.systolicBP}/${v.diastolicBP}`);
+      let bpWarning = '';
+      if (visits.length >= 2) {
+        const latestSys = visits[0].systolicBP;
+        const prevSys = visits[1].systolicBP;
+        if (latestSys > prevSys + 10) {
+          bpWarning = ' <span class="text-rose-600 font-extrabold animate-pulse">(⚠️ RISING TRAJECTORY)</span>';
+        }
+      }
+      bpTrendText.innerHTML = `${bpList.join(' → ')}${bpWarning}`;
+
+      // Anemia Hb progression
+      const hbList = [...visits].reverse().map(v => `${v.hemoglobin} g/dL`);
+      let anemiaWarning = '';
+      const latestHb = visits[0].hemoglobin;
+      if (latestHb < 10.0) {
+        anemiaWarning = ` <span class="text-amber-600 font-extrabold">(⚠️ Anemic - Hb: ${latestHb})</span>`;
+      }
+      anemiaText.innerHTML = `${hbList.join(' → ')}${anemiaWarning}`;
+
+      // Advised Medicines
+      const pastMeds = visits.map(v => v.medications).filter(Boolean).join('; ');
+      medsText.innerHTML = pastMeds ? [...new Set(pastMeds.split('; '))].join('; ') : "Standard Prenatal Iron Adherence advised.";
+    }
+  }
+
+  if (pregnancySelect) {
+    pregnancySelect.addEventListener('change', updateLongitudinalContext);
+    updateLongitudinalContext();
+  }
+
+  // BMI Dynamic Auto-Calculator
+  const weightInput = document.querySelector('input[name="weight"]');
+  const heightInput = document.querySelector('input[name="height"]');
+  const bmiDisplay = document.getElementById('bmiDisplay');
+
+  function calculateBMI() {
+    if (!weightInput || !heightInput || !bmiDisplay) return;
+    const w = parseFloat(weightInput.value);
+    const h = parseFloat(heightInput.value);
+    
+    if (w > 0 && h > 0) {
+      const bmi = (w / (h * h)).toFixed(1);
+      let classification = 'Normal';
+      let colorClass = 'text-emerald-600';
+      
+      if (bmi < 18.5) {
+        classification = 'Underweight';
+        colorClass = 'text-amber-600';
+      } else if (bmi >= 25 && bmi < 30) {
+        classification = 'Overweight';
+        colorClass = 'text-amber-600';
+      } else if (bmi >= 30) {
+        classification = 'Obese';
+        colorClass = 'text-rose-600';
+      }
+      
+      bmiDisplay.innerHTML = `Calculated BMI: <strong class="${colorClass}">${bmi}</strong> (${classification})`;
+    } else {
+      bmiDisplay.innerHTML = '';
+    }
+  }
+
+  if (weightInput && heightInput) {
+    weightInput.addEventListener('input', calculateBMI);
+    heightInput.addEventListener('input', calculateBMI);
+  }
+</script>

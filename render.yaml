@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: maternalink
+    runtime: node
+    buildCommand: npm run build
+    startCommand: node ./dist/server/entry.mjs
+    envVars:
+      - key: DEPLOY_PLATFORM
+        value: node
+      - key: DATABASE_URL
+        sync: false
+        placeholder: "postgresql://..."
+      - key: OPENROUTER_API_KEY
+        sync: false
+        placeholder: "sk-or-v1-..."
+      - key: GEMMA_MODEL
+        value: google/gemma-4-31b-it:free
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GCP_PROJECT_ID
+        value: maternalink-analytics
+      - key: GCP_DATASET_ID
+        value: maternalink_analytics
+      - key: GCP_CLIENT_EMAIL
+        sync: false
+        placeholder: "maternalink-etl@..."
+      - key: GCP_PRIVATE_KEY
+        sync: false
+        placeholder: "-----BEGIN PRIVATE KEY-----..."
